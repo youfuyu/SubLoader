@@ -34,6 +34,13 @@ class TestConfig(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 config_mod.load_config(Path(tmp) / "missing.toml")
 
+    def test_missing_default_config_uses_defaults(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(config_mod, "PROJECT_ROOT", Path(tmp)):
+                cfg = config_mod.load_config()
+        self.assertIsNone(cfg.path)
+        self.assertEqual(cfg._data, config_mod.DEFAULTS)
+
     def test_defaults_are_independent(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "empty.toml"

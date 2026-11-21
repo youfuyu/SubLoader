@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import errno
 import math
 import os
 import tomllib
@@ -244,10 +245,18 @@ def load_config(path: Path | str | None = None) -> Config:
     explicit = path is not None
     if not explicit:
         path = PROJECT_ROOT / "config.toml"
+    path = Path(path).expanduser()
     try:
-        path = Path(path).expanduser().resolve()
-    except RuntimeError as exc:
+        # Python 3.13 起,非严格解析不再报告符号链接循环.
+        path = path.resolve(strict=True)
+    except FileNotFoundError:
+        path = path.resolve()
+    except RuntimeError as exc:  # Python 3.11 / 3.12
         raise ValueError("配置路径存在符号链接循环") from exc
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise ValueError("配置路径存在符号链接循环") from exc
+        raise
     data: dict = {}
     if path.exists():
         with open(path, "rb") as fh:

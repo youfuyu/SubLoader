@@ -161,10 +161,13 @@ class TestPathBoundaries(unittest.TestCase):
         self.assertTrue(self.cfg.validate())
 
     def test_config_symlink_loop_is_a_clean_value_error(self):
-        loop = self.root / 'loop.toml'
+        loop = self.root / 'config.toml'
         loop.symlink_to(loop.name)
-        with self.assertRaises(ValueError):
-            load_config(loop)
+        for path in (loop, None):
+            with self.subTest(explicit=path is not None):
+                with mock.patch('core.config.PROJECT_ROOT', self.root):
+                    with self.assertRaisesRegex(ValueError, '符号链接循环'):
+                        load_config(path)
 
     def test_different_configs_cannot_interleave_shared_outputs(self):
         first, second = isolated_config(self.root / 'a'), isolated_config(self.root / 'b')
