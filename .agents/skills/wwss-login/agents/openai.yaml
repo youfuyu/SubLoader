@@ -1,0 +1,4 @@
+interface:
+  display_name: "西部世界登录"
+  short_description: "识别图片验证码，使用本地配置登录并安全保存西部世界 token"
+  default_prompt: "使用 $wwss-login 根据本地配置识别图片验证码、完成登录并保存 token。"

@@ -19,11 +19,13 @@ GitHub 仓库仅保存源码、离线测试、依赖锁文件和无凭据的配�
 
 生成的订阅默认不包含账户邮箱、到期时间和流量,账户信息也不写入日志。原始 JSON 与订阅中的节点密码仍属于私有运行数据,必须限制文件和 HTTP 服务访问权限。
 
+`--agent` 模式通过 JSON 行事件提供临时验证码图片路径,只从 stdin 接收验证码答案。项目 Skill 位于 `.agents/skills/wwss-login/`,不包含实际凭据。agent 根据图片回填验证码,账号密码和 token 继续由 Python 模块处理;失败时只输出阶段和脱敏消息。
+
 ## 提交前检查
 
 ```sh
 git config core.hooksPath .githooks
-git add README.md SECURITY.md pyproject.toml uv.lock run.sh config.example.toml login.example.toml .gitignore .githooks .github core tests scripts
+git add README.md SECURITY.md pyproject.toml uv.lock run.sh config.example.toml login.example.toml .gitignore .githooks .github .agents/skills/wwss-login core tests scripts
 .venv/bin/python scripts/check_release.py
 git diff --cached --stat
 ```

@@ -8,6 +8,7 @@ import io
 import json
 import os
 from pathlib import Path
+import selectors
 import subprocess
 import tempfile
 import threading
@@ -43,7 +44,7 @@ def login_page(gt=False):
 class TestLoginFlow(unittest.TestCase):
     def setUp(self):
         self.state = {"requests": [], "registered": True, "token": "test-token", "gt": False,
-                      "redirect": False, "failure": None}
+                      "redirect": False, "failure": None, "failure_path": None}
         state = self.state
 
         class Handler(BaseHTTPRequestHandler):
@@ -82,7 +83,7 @@ class TestLoginFlow(unittest.TestCase):
                     self.send(b'{"code":1,"data":{}}')
                 elif state["redirect"]:
                     self.send(b"", status=302, headers=[("Location", "https://example.invalid/leak")])
-                elif state["failure"] is not None:
+                elif state["failure"] is not None and state["failure_path"] in (None, self.path):
                     self.send(json.dumps(state["failure"]).encode())
                 elif self.path == "/user/account/check-is-registed":
                     self.send(json.dumps({"code": 0, "data": {"is_registed": state["registered"]}}).encode())
@@ -177,6 +178,96 @@ class TestLoginFlow(unittest.TestCase):
             self.assertEqual((root / "out/token.txt").read_text(), "test-token\n")
             self.assertNotIn("test-token", result.stdout + result.stderr)
 
+    def test_agent_protocol_waits_for_answer_in_same_process(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_config(root / "login.local.toml", portal=self.portal, email="user@example.invalid",
+                         password="private-password", token_file="out/token.txt", open_captcha=True)
+            uv = root / "uv"
+            uv.write_text("#!/bin/sh\nexit 0\n")
+            uv.chmod(0o755)
+            environment = {k: v for k, v in os.environ.items()
+                           if k not in {"SUBLOADER_EMAIL", "SUBLOADER_PASSWORD", "PYTHONPATH"}}
+            environment["PATH"] = str(root) + os.pathsep + environment.get("PATH", "")
+            process = subprocess.Popen(
+                [str(login.PROJECT_ROOT / "run.sh"), "login", "--agent", "-c", "login.local.toml"],
+                cwd=root, env=environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, text=True,
+            )
+            try:
+                with selectors.DefaultSelector() as selector:
+                    selector.register(process.stdout, selectors.EVENT_READ)
+                    self.assertTrue(selector.select(timeout=10), "agent 未在等待 stdin 前输出事件")
+                challenge_line = process.stdout.readline()
+                challenge = json.loads(challenge_line)
+                self.assertEqual(challenge["event"], "captcha_required")
+                image = Path(challenge["image_path"])
+                self.assertTrue(image.is_absolute())
+                self.assertTrue(image.exists())
+                self.assertEqual(image.stat().st_mode & 0o777, 0o600)
+                remaining, error = process.communicate("abcd\n", timeout=10)
+                self.assertEqual(process.returncode, 0, error)
+                events = [json.loads(line) for line in remaining.splitlines()]
+                self.assertEqual([event["event"] for event in events], ["captcha_verified", "login_succeeded"])
+                self.assertEqual(Path(events[-1]["token_file"]).resolve(), (root / "out/token.txt").resolve())
+                self.assertEqual(events[-1]["mode"], "0600")
+                self.assertEqual((root / "out/token.txt").read_text(), "test-token\n")
+                self.assertNotIn("test-token", challenge_line + remaining + error)
+                self.assertNotIn("private-password", challenge_line + remaining + error)
+                self.assertFalse(image.exists())
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                process.communicate(timeout=5)
+        self.assertEqual(len(self.state["requests"]), 4)
+        self.assertEqual(self.state["requests"][-1][1]["password"], ["private-password"])
+
+    def test_agent_failure_stage_and_secrets_are_redacted(self):
+        self.state["failure"] = {"code": 123, "data": {}, "message": "private-password test-token"}
+        for path, expected_stage in (("/user/account/check-is-registed", "captcha"),
+                                     ("/user/account/login", "login")):
+            with self.subTest(stage=expected_stage), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.state["failure_path"] = path
+                write_config(root / "login.local.toml", portal=self.portal, email="user@example.invalid",
+                             password="private-password", open_captcha=True)
+                environment = {k: v for k, v in os.environ.items()
+                               if k not in {"SUBLOADER_EMAIL", "SUBLOADER_PASSWORD"}}
+                with mock.patch.dict(os.environ, environment, clear=True), \
+                        mock.patch("builtins.input", return_value="abcd"), \
+                        mock.patch.object(login.webbrowser, "open") as browser, \
+                        contextlib.redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(login.main(["--agent", "-c", str(root / "login.local.toml")]), 1)
+                events = [json.loads(line) for line in output.getvalue().splitlines()]
+                self.assertEqual(events[-1]["event"], "login_failed")
+                self.assertEqual(events[-1]["stage"], expected_stage)
+                self.assertNotIn("private-password", output.getvalue())
+                self.assertNotIn("test-token", output.getvalue())
+                self.assertFalse((root / "data/wwss-token.txt").exists())
+                self.assertFalse(Path(events[0]["image_path"]).exists())
+                browser.assert_not_called()
+
+    def test_agent_eof_cleans_image_and_preserves_token(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output_path = root / "token.txt"
+            output_path.write_text("old-token\n")
+            config = root / "login.local.toml"
+            write_config(config, portal=self.portal, email="user@example.invalid",
+                         password="private-password", token_file="token.txt")
+            environment = {k: v for k, v in os.environ.items()
+                           if k not in {"SUBLOADER_EMAIL", "SUBLOADER_PASSWORD"}}
+            with mock.patch.dict(os.environ, environment, clear=True), \
+                    mock.patch("builtins.input", side_effect=EOFError), \
+                    contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(login.main(["--agent", "-c", str(config)]), 1)
+            events = [json.loads(line) for line in output.getvalue().splitlines()]
+            self.assertEqual(events[-1]["stage"], "captcha")
+            self.assertEqual(events[-1]["event"], "login_failed")
+            self.assertFalse(Path(events[0]["image_path"]).exists())
+            self.assertEqual(output_path.read_text(), "old-token\n")
+            self.assertEqual(len(self.state["requests"]), 2)
+
     def test_core_login_token_file_is_used_by_node_fetch(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -237,6 +328,29 @@ class TestLoginFlow(unittest.TestCase):
 
 
 class TestLoginInputs(unittest.TestCase):
+    def test_agent_requires_local_credentials_without_prompt_or_network(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "login.local.toml"
+            for missing in ("email", "password"):
+                with self.subTest(missing=missing):
+                    settings = {"portal": "https://example.invalid", "email": "user@example.invalid",
+                                "password": "private-password"}
+                    settings[missing] = ""
+                    write_config(config, **settings)
+                    environment = {k: v for k, v in os.environ.items()
+                                   if k not in {"SUBLOADER_EMAIL", "SUBLOADER_PASSWORD"}}
+                    with mock.patch.dict(os.environ, environment, clear=True), \
+                            mock.patch("builtins.input") as prompt, \
+                            mock.patch.object(login.LoginClient, "request") as request, \
+                            contextlib.redirect_stdout(io.StringIO()) as output:
+                        self.assertEqual(login.main(["--agent", "-c", str(config)]), 1)
+                    event = json.loads(output.getvalue())
+                    self.assertEqual(event["event"], "login_failed")
+                    self.assertEqual(event["stage"], "configuration")
+                    self.assertNotIn("private-password", output.getvalue())
+                    prompt.assert_not_called()
+                    request.assert_not_called()
+
     def test_missing_or_invalid_config_is_redacted_and_does_not_request_network(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "bad.local.toml"

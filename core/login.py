@@ -11,6 +11,7 @@ import argparse
 import base64
 import getpass
 import hashlib
+import http.client
 import http.cookiejar
 import json
 import math
@@ -183,7 +184,7 @@ class LoginClient:
             status = exc.code
             exc.close()
             raise LoginError("登录服务返回 HTTP %d，请检查门户地址或官网验证提示" % status) from None
-        except (urllib.error.URLError, OSError, ValueError):
+        except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError):
             raise LoginError("登录网络请求失败，请检查网络、证书和门户地址") from None
 
     def post(self, path: str, fields: dict) -> dict:
@@ -271,9 +272,22 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
                         help="用默认浏览器打开本地验证码图片")
     parser.add_argument("--remember-days", type=int, choices=(0, 30))
     parser.add_argument("--timeout", type=float, help="网络操作超时秒数，最大 120")
+    parser.add_argument("--agent", action="store_true", help="JSON 行事件交互：输出验证码路径，从 stdin 接收答案")
 
 
 def run(args: argparse.Namespace) -> int:
+    agent = getattr(args, "agent", False)
+    stage = "configuration"
+
+    def event(name, **fields):
+        print(json.dumps({"event": name, **fields}, ensure_ascii=False), flush=True)
+
+    def failure(message):
+        if agent:
+            event("login_failed", stage=stage, message=message)
+        else:
+            print(message, file=sys.stderr)
+
     try:
         config = getattr(args, "config", None)
         settings, config_path = load_login_config(Path(config) if config is not None else None)
@@ -291,26 +305,38 @@ def run(args: argparse.Namespace) -> int:
         client = LoginClient(portal, timeout)
         email = args.email if args.email is not None else os.environ.get("SUBLOADER_EMAIL", settings.get("email", ""))
         if not email and "SUBLOADER_EMAIL" not in os.environ and args.email is None:
+            if agent:
+                raise LoginError("agent 模式需要在本地配置或环境变量中提供邮箱")
             email = input("登录邮箱：")
         email = email.strip()
         if not email or "@" not in email:
             raise LoginError("请输入有效邮箱")
         password = os.environ.get("SUBLOADER_PASSWORD", settings.get("password") or None)
+        if agent and password is None:
+            raise LoginError("agent 模式需要在本地配置或环境变量中提供密码")
         if password is not None and not password.strip():
             raise LoginError("密码不能为空")
+        stage = "prepare"
         image = client.prepare()
         extension = captcha_extension(image)
         with tempfile.TemporaryDirectory(prefix="wwss-captcha-") as directory:
             image_path = Path(directory) / ("captcha" + extension)
             image_path.write_bytes(image)
             os.chmod(image_path, 0o600)
-            print("验证码图片：%s" % image_path)
-            if open_captcha:
+            stage = "captcha"
+            if agent:
+                event("captcha_required", image_path=str(image_path))
+            else:
+                print("验证码图片：%s" % image_path)
+            if open_captcha and not agent:
                 webbrowser.open(image_path.as_uri())
-            verify_code = input("输入图片验证码：").strip()
+            verify_code = (input() if agent else input("输入图片验证码：")).strip()
             if not verify_code:
                 raise LoginError("验证码不能为空")
             client.check_email(email, verify_code)
+            if agent:
+                event("captcha_verified")
+            stage = "login"
             if password is None:
                 with warnings.catch_warnings():
                     warnings.simplefilter("error", getpass.GetPassWarning)
@@ -318,17 +344,21 @@ def run(args: argparse.Namespace) -> int:
             if not password.strip():
                 raise LoginError("密码不能为空")
             token = client.login(email, password, remember_days)
+            stage = "save_token"
             save_token(output, token)
-        print("登录成功，token 已保存至 %s（权限 0600）" % output)
+        if agent:
+            event("login_succeeded", token_file=str(output.absolute()), mode="0600")
+        else:
+            print("登录成功，token 已保存至 %s（权限 0600）" % output)
         return 0
     except LoginError as exc:
-        print("登录失败：%s" % exc, file=sys.stderr)
+        failure("登录失败：%s" % exc)
     except getpass.GetPassWarning:
-        print("当前终端不支持隐藏密码；请使用交互终端或 SUBLOADER_PASSWORD 环境变量", file=sys.stderr)
+        failure("当前终端不支持隐藏密码；请使用交互终端或 SUBLOADER_PASSWORD 环境变量")
     except (EOFError, KeyboardInterrupt):
-        print("已取消登录", file=sys.stderr)
+        failure("已取消登录")
     except OSError:
-        print("无法读写登录所需文件；原 token 文件未被部分覆盖", file=sys.stderr)
+        failure("无法读写登录所需文件；原 token 文件未被部分覆盖")
     return 1
 
 
