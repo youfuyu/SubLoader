@@ -29,7 +29,37 @@ cp -n config.example.toml config.toml
 
 首次配置只需关注两项: `api.api_urls` 填 API 根地址,`api.token` 选择登录方式。示例已选择 `rules.preset = "builtin"`,可以先生成订阅,不需要搭建规则 HTTP 服务。生成文件位于 `data/subscriptions/`。跑通后再按示例中的步骤切换规则来源。
 
-凭据可以使用 `SUBLOADER_TOKEN` 和 `SUBLOADER_SUBSCRIPTION_URL` 环境变量注入,优先于 TOML,不会写回文件。部署平台应使用 Secret 设置保存实际值。文件中的 `token = ""` 或 `token = "auto"` 会从已登录的 macOS WWSS App 偏好设置读取 token。程序不接收账号密码,也不会自动登录或续期 token。
+凭据可以使用 `SUBLOADER_TOKEN` 和 `SUBLOADER_SUBSCRIPTION_URL` 环境变量注入,优先于 TOML,不会写回文件。部署平台应使用 Secret 设置保存实际值。文件中的 `token = ""` 或 `token = "auto"` 会从已登录的 macOS WWSS App 偏好设置读取 token。节点下载程序不接收账号密码,也不会自动登录或续期 token。需要密码登录时可单独运行下面的登录脚本。
+
+## 登录获取 token
+
+登录配置使用独立的本地文件。复制示例后填写 `[login]` 中的 `portal`、`email`、`password` 和 `token_file`:
+
+```sh
+cp -n login.example.toml login.local.toml
+chmod 600 login.local.toml
+./run.sh login
+```
+
+`portal` 填 HTTPS 门户根地址,它可能与节点 API 地址不同。`token_file` 支持绝对路径和 `~/`;相对路径以登录配置文件所在目录为基准。默认读取项目根目录的 `login.local.toml`,该文件已被 Git 忽略。还可以指定另一份本地配置:
+
+```sh
+./run.sh login -c /path/to/login.local.toml
+```
+
+配置中填好账号密码后,运行时只需输入图片验证码。`open_captcha = true` 会用默认浏览器打开本地验证码图片;设置为 `false` 时自行打开终端显示的图片路径。整个流程共享会话 Cookie,图片在脚本结束时删除。网页初始化数据在 Python 中解码,不会执行网页 JavaScript。
+
+登录成功后,token 原子保存到配置中的 `token_file`（默认 `data/wwss-token.txt`）,文件权限为 `0600`,不会打印到终端。随后运行节点下载（自定义了 token 路径时替换下面的路径）:
+
+```sh
+SUBLOADER_TOKEN="$(cat data/wwss-token.txt)" ./run.sh --once
+```
+
+命令行参数优先于环境变量,环境变量优先于本地配置。可用 `--email` 或 `SUBLOADER_EMAIL` 覆盖邮箱,用 `SUBLOADER_PASSWORD` 覆盖密码;空环境变量会报错。配置未填写邮箱或密码时才会交互输入,密码不回显。`--portal`、`--output`、`--open-captcha`/`--no-open-captcha`、`--remember-days` 和 `--timeout` 可覆盖对应配置;命令行 `--output` 的相对路径以调用目录为基准。记住登录天数仅支持 `0` 和 `30`（默认）,不代表已确认 token 的有效期。
+
+仍可直接运行仅依赖 Python 标准库的 `python3 scripts/wwss_login.py`,支持相同配置和参数。所有远程登录请求校验 HTTPS 证书,登录 POST 不跟随重定向。脚本直连网络,与节点下载程序一致。
+
+当前实现依据已分析的网页登录协议,已通过本地模拟接口测试,尚未使用真实账号验证。需要人工输入图片验证码;若站点开启极验、额外风控或修改页面协议,脚本会提示失败,需在官方网页登录完成验证。失败时不会自动重试密码或创建账户,也不会更新已有 token 文件。
 
 ## 使用
 
@@ -45,6 +75,9 @@ cp -n config.example.toml config.toml
 
 # 强制下载/更新规则缓存
 ./run.sh rules
+
+# 使用本地账号密码配置登录并保存 token
+./run.sh login
 ```
 
 没有 uv 时,也可以在已有虚拟环境安装 PyYAML 后使用 `python -m core`。相对 `-c` 路径以调用目录为基准,配置中的相对数据路径以项目根为基准。

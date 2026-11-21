@@ -16,13 +16,13 @@ from scripts.check_release import check_index, local_private_values, private_pat
 
 class TestReleaseGuard(unittest.TestCase):
     def test_private_file_matrix(self):
-        for path in ('config.toml', 'config.dev.toml', 'CONFIG.PROD.TOML', '.env', '.env.production',
+        for path in ('config.toml', 'config.dev.toml', 'CONFIG.PROD.TOML', 'login.local.toml', '.env', '.env.production',
                      '.workbuddy/memory/note.md', '.codex/session.json', 'data/raw.json',
                      'logs/run.log', 'one.yaml.backup', '.one.yaml.abcd.rollback',
                      'private.pem', 'out/subloader.lock', 'WestWorldVPN-clash.yaml', '.DS_Store'):
             with self.subTest(path=path):
                 self.assertTrue(private_path(path))
-        for path in ('config.example.toml', 'uv.lock', 'core/rules.py', 'tests/test_converter.py',
+        for path in ('config.example.toml', 'login.example.toml', 'uv.lock', 'core/rules.py', 'tests/test_converter.py',
                      'README.md', '.githooks/pre-commit'):
             with self.subTest(path=path):
                 self.assertFalse(private_path(path))
@@ -90,11 +90,22 @@ class TestReleaseGuard(unittest.TestCase):
             self.assertTrue(check_index(root)[1])
 
     def test_gitignore_protects_real_runtime_artifacts(self):
-        paths = ['config.toml', '.workbuddy/memory/note.md', 'data/raw.json', '.env.production',
+        paths = ['config.toml', 'login.local.toml', '.workbuddy/memory/note.md', 'data/raw.json', '.env.production',
                  '.config.yaml.random.rollback', '.output.random.backup', 'logs/run.log.1']
         result = subprocess.run(['git', '-C', str(PROJECT_ROOT), 'check-ignore', '--no-index', '--stdin'],
                                 input='\n'.join(paths) + '\n', capture_output=True, text=True, check=True)
         self.assertEqual(set(result.stdout.splitlines()), set(paths))
+
+    def test_login_config_credentials_and_custom_token_are_scanned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'login.local.toml').write_text(
+                '[login]\nemail = "user@example.invalid"\npassword = "test-password"\n'
+                'token_file = "private.txt"\n')
+            (root / 'private.txt').write_text('test-token\n')
+            with mock.patch.dict(os.environ, {'SUBLOADER_PASSWORD': 'environment-password'}):
+                values = local_private_values(root)
+            self.assertTrue({'user@example.invalid', 'test-password', 'test-token', 'environment-password'} <= values)
 
     def test_blank_raw_path_still_scans_default_private_snapshot(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -4,6 +4,7 @@
   run.sh                      立即执行一次(失败按配置自动重试)
   run.sh run --once           立即执行一次(不重试)
   run.sh rules                单独下载/更新分流规则(GitHub 镜像加速)
+  run.sh login                从本地登录配置获取并保存 token
   可选 -c 配置路径;定时由 WorkBuddy agent 自动化触发
 """
 
@@ -99,7 +100,8 @@ def cmd_rules(args) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="subloader", description="西部世界VPN 订阅下载与 Clash/QX 配置生成")
+        prog="subloader", description="西部世界VPN 订阅下载与 Clash/QX 配置生成",
+        epilog="账号密码登录：./run.sh login（帮助：./run.sh login --help）")
     parser.add_argument("-c", "--config", help="配置文件路径(默认 项目根/config.toml)")
     parser.add_argument("--once", action="store_true", help="不重试,只执行一次")
     sub = parser.add_subparsers(dest="command")

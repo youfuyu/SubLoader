@@ -1,0 +1,19 @@
+# 复制为项目根目录的 login.local.toml，填写实际门户地址和账号密码。
+# login.local.toml 已被 Git 忽略；本地文件建议权限 0600。
+# 运行：./run.sh login；其他配置文件可用 ./run.sh login -c /path/to/login.local.toml。
+[login]
+
+# 门户根地址，可能与节点 API 地址不同，不追加 /portal 等路径。
+portal = ""
+email = ""
+password = ""
+
+# token 写入位置；相对路径以本配置文件所在目录为基准，支持 ~/ 和绝对路径。
+token_file = "data/wwss-token.txt"
+
+# 自动打开验证码图片；仍需手工输入验证码。
+open_captcha = true
+
+# 记住登录天数，仅支持 0 或 30；不代表已确认 token 有效期。
+remember_days = 30
+timeout = 20

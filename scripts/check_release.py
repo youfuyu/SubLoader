@@ -103,6 +103,20 @@ def local_private_values(root: Path) -> set[str]:
         if isinstance(value, str) and len(value) >= 8:
             values.update({value, json.dumps(value, ensure_ascii=False)[1:-1], quote(value, safe='')})
 
+    login_path = root / 'login.local.toml'
+    if login_path.exists():
+        login = tomllib.loads(login_path.read_text(encoding='utf-8')).get('login', {})
+        for field in ('portal', 'email', 'password'):
+            remember(login.get(field))
+        token_path = Path(login.get('token_file') or 'data/wwss-token.txt').expanduser()
+        if not token_path.is_absolute():
+            token_path = root / token_path
+        token_path = token_path.resolve()
+        if token_path.is_relative_to(root.resolve()) and token_path.is_file():
+            if token_path.stat().st_size > 65536:
+                raise ValueError('本机 token 文件过大,需要人工审查')
+            remember(token_path.read_text(encoding='utf-8').strip())
+
     config_path = root / 'config.toml'
     if config_path.exists():
         config = tomllib.loads(config_path.read_text(encoding='utf-8'))
@@ -139,7 +153,7 @@ def local_private_values(root: Path) -> set[str]:
                 for child in value:
                     visit(child)
         visit(raw)
-    for variable in ('SUBLOADER_TOKEN', 'SUBLOADER_SUBSCRIPTION_URL'):
+    for variable in ('SUBLOADER_TOKEN', 'SUBLOADER_SUBSCRIPTION_URL', 'SUBLOADER_EMAIL', 'SUBLOADER_PASSWORD'):
         remember(os.environ.get(variable))
     return values
 

@@ -23,7 +23,8 @@ api_urls = []
 
 # 留空或填写 auto：从已登录的 macOS WWSS App 偏好设置读取 token。
 # 也可以直接填写 token，或用 SUBLOADER_TOKEN 环境变量覆盖。
-# 程序不接收账号密码，也不会自动登录或续期 token。
+# 节点下载程序不接收账号密码，也不会自动登录或续期 token。
+# 可单独运行 scripts/wwss_login.py 获取 token，再通过 SUBLOADER_TOKEN 注入。
 token = ""
 
 # 可选域名发现接口的完整 URL 列表；留空跳过域名发现。
