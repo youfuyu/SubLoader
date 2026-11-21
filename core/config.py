@@ -81,6 +81,10 @@ DEFAULTS: dict = {
 def _merge(base: dict, override: dict) -> dict:
     out = copy.deepcopy(base)
     for key, value in override.items():
+        # TOML 没有 null;配置文件可用空字符串表示沿用默认值.
+        # 环境变量在合并后应用,空的凭据环境变量仍按显式覆盖处理.
+        if value == "" and key in base and not isinstance(base[key], dict):
+            continue
         if isinstance(value, dict) and isinstance(out.get(key), dict):
             out[key] = _merge(out[key], value)
         else:
@@ -194,8 +198,8 @@ class Config:
         if not is_http_url(provider_url) or urlsplit(provider_url).query:
             errors.append("[rules] provider_base_url 必须是无查询参数的有效 HTTP(S) URL")
         mirrors = self.get("rules", "mirror_urls")
-        if not isinstance(mirrors, list) or not mirrors:
-            errors.append("[rules] mirror_urls 必须是非空 URL 模板列表")
+        if not isinstance(mirrors, list):
+            errors.append("[rules] mirror_urls 必须是 URL 模板列表,留空列表使用默认镜像")
         else:
             for template in mirrors:
                 try:

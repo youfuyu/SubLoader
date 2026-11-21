@@ -11,7 +11,7 @@ from unittest import mock
 
 from core import fetcher, runner
 from core.config import Config, DEFAULTS, PROJECT_ROOT, load_config
-from scripts.check_release import check_index, private_path, scan_text
+from scripts.check_release import check_index, local_private_values, private_path, scan_text
 
 
 class TestReleaseGuard(unittest.TestCase):
@@ -95,6 +95,16 @@ class TestReleaseGuard(unittest.TestCase):
         result = subprocess.run(['git', '-C', str(PROJECT_ROOT), 'check-ignore', '--no-index', '--stdin'],
                                 input='\n'.join(paths) + '\n', capture_output=True, text=True, check=True)
         self.assertEqual(set(result.stdout.splitlines()), set(paths))
+
+    def test_blank_raw_path_still_scans_default_private_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'config.toml').write_text('[data]\nraw_file = ""\n')
+            (root / 'data').mkdir()
+            secret = 'fixture-' + 'a1b2c3d4' * 4
+            (root / 'data' / 'latest-wwss-nodes.json').write_text(
+                json.dumps({'nodes': [{'password': secret}]}))
+            self.assertIn(secret, local_private_values(root))
 
 
 class TestCredentialPrivacy(unittest.TestCase):

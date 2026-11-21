@@ -25,11 +25,11 @@ uv sync --frozen
 cp -n config.example.toml config.toml
 ```
 
-在本机 `config.toml` 中将 `https://api.example.invalid` 替换为实际 API 地址,需要时填写域名发现接口。示例域名是保留占位符,不能直接用于真实请求。已有本机配置时保留原文件。
+在本机 `config.toml` 的 `api.api_urls` 列表中填写实际 API 根地址,需要时填写域名发现接口。样例中的 API 地址列表为空,至少填写一个地址后才能运行。已有本机配置时保留原文件。
 
 首次配置只需关注两项: `api.api_urls` 填 API 根地址,`api.token` 选择登录方式。示例已选择 `rules.preset = "builtin"`,可以先生成订阅,不需要搭建规则 HTTP 服务。生成文件位于 `data/subscriptions/`。跑通后再按示例中的步骤切换规则来源。
 
-凭据可以使用 `SUBLOADER_TOKEN` 和 `SUBLOADER_SUBSCRIPTION_URL` 环境变量注入,优先于 TOML,不会写回文件。部署平台应使用 Secret 设置保存实际值。`token = "auto"` 会从已登录的 macOS WWSS App 偏好设置读取 token。
+凭据可以使用 `SUBLOADER_TOKEN` 和 `SUBLOADER_SUBSCRIPTION_URL` 环境变量注入,优先于 TOML,不会写回文件。部署平台应使用 Secret 设置保存实际值。文件中的 `token = ""` 或 `token = "auto"` 会从已登录的 macOS WWSS App 偏好设置读取 token。程序不接收账号密码,也不会自动登录或续期 token。
 
 ## 使用
 
@@ -79,12 +79,14 @@ SubLoader 本身不启动 Web 服务。使用 GitHub 模式时,需要把 `rules.
 
 ## 主要配置
 
-完整字段和说明见 [config.example.toml](config.example.toml)。
+全部 27 个配置项及说明均已在 [config.example.toml](config.example.toml) 中显式列出,直接修改对应值即可。
+
+配置文件中,可选字段填写空字符串 `""` 或省略该字段都会使用程序默认值。明确填写的 `false`、`0` 会保留。列表使用 `[]`: `api.cloudapi_urls` 为空时跳过发现,`rules.mirror_urls` 为空时使用默认镜像;必填的 `api.api_urls` 不能为空。`api.subscription_url` 为空时跳过个人订阅规则抓取。环境变量在默认值合并后覆盖配置,因此已设置但为空的 `SUBLOADER_TOKEN` 会报错,不会自动切换到其他凭据来源。
 
 | 配置 | 默认值 | 含义 |
 |---|---|---|
 | `api.token` | `auto` | 自动读取、环境变量或本机手工配置 |
-| `api.api_urls` | 示例保留域名 | 必须替换为实际 API 地址 |
+| `api.api_urls` | 样例为空列表 | 必须填写至少一个实际 API 根地址 |
 | `api.cloudapi_urls` | 空列表 | 可选域名发现接口 |
 | `api.subscription_url` | 空字符串 | 私有 Clash 订阅地址,用于规则降级源 |
 | `api.tls_verify` | `false` | 私有 API 的兼容设置,可按服务端证书情况开启 |

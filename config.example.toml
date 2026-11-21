@@ -1,95 +1,134 @@
-# SubLoader 配置示例
+# SubLoader 完整配置示例（全部 27 个配置项）
 #
 # 首次使用：
 #   1. 复制为 config.toml：cp -n config.example.toml config.toml
-#   2. 把下面的 api_urls 换成实际 API 根地址，并确认登录方式。
+#   2. 填写 api_urls，并确认 token 的获取方式。
 #   3. 保留 builtin 规则，执行 ./run.sh --once。
 #   4. 在 data/subscriptions/ 查看生成的 Clash 和 QX 文件。
 #
-# 注释掉的选项使用程序默认值；需要修改时，去掉该行开头的 #。
+# 所有支持的配置项都已列出，直接修改等号右侧即可，不需要取消注释。
+# 不配置的字段可以填 ""，程序会使用默认值；false 和 0 是有效配置。
+# 列表使用 [] 表示空列表；api_urls 是必填项，至少填写一个实际 API 地址。
+# token、个人订阅链接和域名发现接口未填写时，分别自动读取、跳过、跳过。
+# 环境变量优先于本文件；SUBLOADER_TOKEN 若存在但为空，会报错。
 # 真实地址和凭据只填入本机 config.toml，不要提交到 GitHub。
 
 
-# ── 1. 连接服务：首先配置这里 ────────────────────────────────
+# ── 1. 连接服务与身份认证 ────────────────────────────────────
 [api]
 
-# 【必须修改】服务 API 的根地址，不是个人订阅链接。
-# 只填协议和域名，不要追加 /user/node/get-list 等接口路径。
-# 多个地址按顺序尝试。下面是占位域名，不能用于真实请求。
-api_urls = ["https://api.example.invalid"]
+# 【必填】服务 API 根地址，例如 ["https://api.example.invalid"]。
+# 多个地址按顺序尝试，不要追加接口路径或个人订阅参数。
+api_urls = []
 
-# 登录方式选一种：
-#   macOS 自动读取：保留 auto，并确保 WWSS App 已登录。
-#   环境变量注入：设置 SUBLOADER_TOKEN，优先于本文件。
-#   本机手动填写：把 auto 替换为实际 token。
-token = "auto"
+# 留空或填写 auto：从已登录的 macOS WWSS App 偏好设置读取 token。
+# 也可以直接填写 token，或用 SUBLOADER_TOKEN 环境变量覆盖。
+# 程序不接收账号密码，也不会自动登录或续期 token。
+token = ""
 
-# 可选：域名发现接口的完整 URL。没有就保持默认空列表。
-# cloudapi_urls = []
+# 可选域名发现接口的完整 URL 列表；留空跳过域名发现。
+cloudapi_urls = []
 
-# 可选：个人 Clash 订阅链接，只用于提取分流规则，不用于下载节点。
-# 选择 subscription 模式时填写，或设置 SUBLOADER_SUBSCRIPTION_URL 环境变量。
-# subscription_url = ""
+# 可选个人 Clash 订阅链接，仅提取分流规则，节点仍从 API 获取。
+# 留空跳过；也可由 SUBLOADER_SUBSCRIPTION_URL 环境变量覆盖。
+subscription_url = ""
 
-# 连接参数，通常不用修改：
-# tls_verify = false            # 是否校验私有 API 证书；false 为现有兼容设置
-# request_timeout = 15          # 每个请求的下载期限，0.001–300 秒
-# max_response_bytes = 16777216  # 默认每个响应最大 16 MiB，可设置到 64 MiB
-# retry_per_url = 1             # 每个地址额外重试 1 次，即最多请求 2 次
-# fetch_account_info = true     # 同时读取账户资料，保存在私有原始 JSON 中
+# 是否读取账户资料并保存在私有原始 JSON 中；默认 true。
+fetch_account_info = true
+
+# 是否校验 API 和个人订阅服务的 TLS 证书；默认 false（兼容设置）。
+tls_verify = false
+
+# 每个请求的总下载期限，单位秒，范围 0.001–300；默认 15。
+request_timeout = 15
+
+# 每个响应的最大字节数，范围 1–67108864；默认 16777216（16 MiB）。
+max_response_bytes = 16777216
+
+# 每个 API 地址额外重试的次数，范围 0–10；默认 1，即最多请求 2 次。
+retry_per_url = 1
 
 
-# ── 2. 选择分流规则：先用 builtin 跑通 ───────────────────────
+# ── 2. 分流规则 ────────────────────────────────────────────
 [rules]
 
-# builtin      → 内置规则；无需订阅链接，也无需 HTTP 服务，适合首次运行。
-# subscription → 从 api.subscription_url 或环境变量提取规则；无需规则 HTTP 服务。
-# github       → 下载公共规则集；需要通过 HTTP 把规则文件提供给 Clash 客户端。
+# builtin：内置规则，无需订阅链接或 HTTP 服务，适合首次运行。
+# subscription：从 api.subscription_url 提取规则，失败回退 builtin。
+# github：下载公共规则集并经 HTTP 发布，失败依次回退 subscription、builtin。
+# 留空时使用程序默认值 github；首次使用建议填写 builtin。
 preset = "builtin"
 
-# 只有 github 模式需要下面这组发布配置。
-# 先取消这两行的注释，再将 preset 改为 github：
-# output_dir = "data/rules"                     # 下载器把规则文件写到这里
-# provider_base_url = "http://127.0.0.1:8000/"  # Clash 从这个 URL 读取规则文件
-#
-# 对应的本机服务示例，在项目根目录另外运行：
+# github 模式使用：规则文件的本机保存目录；默认 data/rules。
+output_dir = "data/rules"
+
+# github 模式使用：Clash 客户端读取规则文件的 HTTP(S) 基础 URL。
+# 留空使用 http://127.0.0.1:8000/pages/rules/，不会自动启动 HTTP 服务。
+# 必须与实际发布目录匹配；远程客户端需填写它能访问的地址。
+# 临时本机服务示例：
 #   python3 -m http.server 8000 --bind 127.0.0.1 --directory data/rules
-# 此时 data/rules/reject.yaml 对应 http://127.0.0.1:8000/reject.yaml。
-# 远程设备使用时，把 URL 换成该设备能访问的服务地址。
+# 使用此命令时，请将下面的值改为 "http://127.0.0.1:8000/"。
+provider_base_url = ""
 
-# 公共规则下载参数，通常不用修改：
-# tls_verify = true             # 独立于 api.tls_verify，校验规则源和发布服务证书
-# refresh_days = 7              # 本地缓存超过 7 天重新下载，允许 0–3650 天
-# mirror_urls = [
-#   "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/{name}.txt",
-#   "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/{name}.txt",
-# ]
+# 公共规则下载镜像，按顺序尝试；必须包含 {name} 占位符。
+# 默认使用以下两个镜像；填写 "" 或 [] 可恢复默认镜像。
+mirror_urls = [
+  "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/{name}.txt",
+  "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/{name}.txt",
+]
+
+# 缓存超过多少天重新下载，范围 0–3650；默认 7，0 表示每次检查更新。
+refresh_days = 7
+
+# 校验规则下载源和发布服务证书；默认 true，独立于 api.tls_verify。
+tls_verify = true
 
 
-# ── 3. 文件输出：一般保留默认位置 ────────────────────────────
+# ── 3. 原始数据与订阅输出 ────────────────────────────────────
 [data]
 
-# 生成的 Clash 和 QX 文件放在哪里。相对路径以项目根目录为基准。
+# 原始节点和账户 JSON，包含私密信息；默认 data/latest-wwss-nodes.json。
+raw_file = "data/latest-wwss-nodes.json"
+
+# Clash 和 QX 输出目录；默认 data/subscriptions。
+# 所有相对路径以项目根目录为基准，支持 ~ 表示用户目录。
 output_dir = "data/subscriptions"
 
-# 原始节点与账户数据，内含私密信息，不要提交到 GitHub。
-# raw_file = "data/latest-wwss-nodes.json"
-
 [output]
-# clash_file = "WestWorldVPN-clash.yaml"            # Clash 配置文件名
-# quantumultx_file = "WestWorldVPN-quantumultx.txt"  # QX 节点文件名
-# backup_old = true               # 覆盖前保存旧文件为 .bak
-# include_quantumultx_group = true # QX 文件按地区添加注释
-# include_account_info = false    # 订阅头默认隐藏邮箱、到期时间和流量
-# tls_verify = false              # Trojan 节点的证书校验，与 API/规则下载设置独立
+
+# Clash 输出文件名（不能包含目录）；默认 WestWorldVPN-clash.yaml。
+clash_file = "WestWorldVPN-clash.yaml"
+
+# Quantumult X 输出文件名（不能包含目录）；默认 WestWorldVPN-quantumultx.txt。
+quantumultx_file = "WestWorldVPN-quantumultx.txt"
+
+# 覆盖前保留一份 .bak 备份；默认 true。
+backup_old = true
+
+# QX 文件按地区添加分组注释；默认 true。
+include_quantumultx_group = true
+
+# 在两份订阅头中包含账户邮箱、到期时间和流量；默认 false。
+include_account_info = false
+
+# 生成的 Trojan 节点是否校验证书；默认 false，独立于下载时的 TLS 设置。
+tls_verify = false
 
 
-# ── 4. 失败重试与日志：通常不用修改 ──────────────────────────
+# ── 4. 失败重试与日志 ────────────────────────────────────────
 [schedule]
-# max_attempts = 3                # 一次触发最多尝试 3 次，允许 1–20 次
-# retry_interval_minutes = 5.0    # 两次尝试间隔 5 分钟，允许 0–1440 分钟
-# 这里只控制失败重试；每天几点执行，需要另行配置外部调度器。
+
+# 一次触发的最大尝试次数（含首次），范围 1–20；默认 3。
+# 命令行 --once 会覆盖本项，只执行一次。
+max_attempts = 3
+
+# 失败后等待多少分钟重试，范围 0–1440，可为小数；默认 5.0。
+# 每天几点执行由外部调度器设置，这里只控制失败重试。
+retry_interval_minutes = 5.0
 
 [log]
-# file = "logs/subloader.log"
-# level = "info"                  # debug / info / warning / error / critical
+
+# 日志路径；默认 logs/subloader.log，按 2 MiB × 3 份备份轮转。
+file = "logs/subloader.log"
+
+# 日志级别：debug / info / warning / error / critical；默认 info。
+level = "info"

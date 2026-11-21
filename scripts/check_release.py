@@ -117,7 +117,7 @@ def local_private_values(root: Path) -> set[str]:
         for field in ('api_urls', 'cloudapi_urls'):
             for value in api.get(field, []):
                 remember(value)
-        raw_path = Path(config.get('data', {}).get('raw_file', 'data/latest-wwss-nodes.json')).expanduser()
+        raw_path = Path(config.get('data', {}).get('raw_file') or 'data/latest-wwss-nodes.json').expanduser()
         if not raw_path.is_absolute():
             raw_path = root / raw_path
     else:

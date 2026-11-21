@@ -20,7 +20,7 @@ from pathlib import Path
 import yaml
 
 from . import store
-from .config import Config, MAX_RESPONSE_BYTES, RULE_NAMES, resolve_path
+from .config import Config, DEFAULTS, MAX_RESPONSE_BYTES, RULE_NAMES, resolve_path
 from .fetcher import _build_opener, _http_get_raw
 
 log = logging.getLogger("core.rules")
@@ -48,10 +48,7 @@ def _validate_rule_text(text: str, name: str) -> list:
 
 def _download_one(cfg: Config, name: str) -> bool:
     """从镜像列表依次尝试下载单个规则文件;成功且校验通过才落盘."""
-    mirrors = cfg.get("rules", "mirror_urls") or [
-        "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/{name}.txt",
-        "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/{name}.txt",
-    ]
+    mirrors = cfg.get("rules", "mirror_urls") or DEFAULTS["rules"]["mirror_urls"]
     timeout = float(cfg.get("api", "request_timeout", 15))
     opener = _build_opener(bool(cfg.get("rules", "tls_verify", True)))
 

@@ -3,6 +3,7 @@
 import os
 import tempfile
 import time
+import tomllib
 import unittest
 import copy
 from pathlib import Path
@@ -40,6 +41,55 @@ class TestConfig(unittest.TestCase):
                 cfg = config_mod.load_config()
         self.assertIsNone(cfg.path)
         self.assertEqual(cfg._data, config_mod.DEFAULTS)
+
+    def test_blank_file_options_use_defaults(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            text = "\n".join(
+                "[%s]\n%s" % (section, "\n".join('%s = ""' % key for key in values))
+                for section, values in config_mod.DEFAULTS.items())
+            path.write_text(text)
+            with mock.patch.dict(os.environ, {}, clear=True):
+                cfg = config_mod.load_config(path)
+            self.assertEqual(cfg._data, config_mod.DEFAULTS)
+            self.assertEqual(path.read_text(), text)
+
+    def test_explicit_false_zero_and_empty_lists_are_preserved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text('[api]\nfetch_account_info = false\nretry_per_url = 0\n'
+                            'cloudapi_urls = []\napi_urls = []\n'
+                            '[output]\nbackup_old = false\ninclude_quantumultx_group = false\n'
+                            '[rules]\nrefresh_days = 0\nmirror_urls = []\n'
+                            '[schedule]\nretry_interval_minutes = 0\n')
+            with mock.patch.dict(os.environ, {}, clear=True):
+                cfg = config_mod.load_config(path)
+        for section, key in (("api", "fetch_account_info"), ("output", "backup_old"),
+                             ("output", "include_quantumultx_group")):
+            self.assertIs(cfg.get(section, key), False)
+        for section, key in (("api", "retry_per_url"), ("rules", "refresh_days"),
+                             ("schedule", "retry_interval_minutes")):
+            self.assertEqual(cfg.get(section, key), 0)
+        self.assertEqual(cfg.get("api", "cloudapi_urls"), [])
+        self.assertEqual(cfg.get("api", "api_urls"), [])
+        self.assertEqual(cfg.get("rules", "mirror_urls"), [])
+        errors = cfg.validate()
+        self.assertEqual(len(errors), 1)
+        self.assertIn("api_urls", errors[0])
+
+    def test_example_lists_all_options_and_only_requires_api_address(self):
+        path = config_mod.PROJECT_ROOT / "config.example.toml"
+        data = tomllib.loads(path.read_text())
+        self.assertEqual(set(data), set(config_mod.DEFAULTS))
+        for section, values in config_mod.DEFAULTS.items():
+            with self.subTest(section=section):
+                self.assertEqual(set(data[section]), set(values))
+        with mock.patch.dict(os.environ, {}, clear=True):
+            cfg = config_mod.load_config(path)
+        self.assertEqual(len(cfg.validate()), 1)
+        self.assertIn("api_urls", cfg.validate()[0])
+        cfg["api"]["api_urls"] = ["https://api.example.invalid"]
+        self.assertEqual(cfg.validate(), [])
 
     def test_defaults_are_independent(self):
         with tempfile.TemporaryDirectory() as tmp:

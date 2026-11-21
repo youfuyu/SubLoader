@@ -11,7 +11,7 @@ GitHub 仓库仅保存源码、离线测试、依赖锁文件和无凭据的配�
 
 ## 本机配置
 
-复制 `config.example.toml` 后在本机填写实际 API 地址。示例使用保留域名,不能直接连接真实服务。配置中的相对数据路径以项目根目录为基准。
+复制 `config.example.toml` 后在本机填写实际 API 地址。样例的 API 地址列表、凭据和个人订阅链接均留空,不会包含真实服务或账户信息。配置中的相对数据路径以项目根目录为基准。
 
 登录 token 可继续使用 `auto` 从已登录的 macOS App 读取,也可通过 `SUBLOADER_TOKEN` 注入。个人订阅地址可通过 `SUBLOADER_SUBSCRIPTION_URL` 注入。这两个环境变量优先于 TOML,不会写回配置文件。部署平台应使用其 Secret 设置保存实际值。
 
