@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+SUBLOADER_ROOT="$(git rev-parse --show-toplevel)"
+SUBLOADER_PYTHON="$SUBLOADER_ROOT/.venv/bin/python"
+if [ ! -x "$SUBLOADER_PYTHON" ]; then
+  SUBLOADER_PYTHON=python3
+fi
+exec "$SUBLOADER_PYTHON" "$SUBLOADER_ROOT/scripts/check_release.py"

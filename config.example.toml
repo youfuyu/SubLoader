@@ -1,0 +1,95 @@
+# SubLoader 配置示例
+#
+# 首次使用：
+#   1. 复制为 config.toml：cp -n config.example.toml config.toml
+#   2. 把下面的 api_urls 换成实际 API 根地址，并确认登录方式。
+#   3. 保留 builtin 规则，执行 ./run.sh --once。
+#   4. 在 data/subscriptions/ 查看生成的 Clash 和 QX 文件。
+#
+# 注释掉的选项使用程序默认值；需要修改时，去掉该行开头的 #。
+# 真实地址和凭据只填入本机 config.toml，不要提交到 GitHub。
+
+
+# ── 1. 连接服务：首先配置这里 ────────────────────────────────
+[api]
+
+# 【必须修改】服务 API 的根地址，不是个人订阅链接。
+# 只填协议和域名，不要追加 /user/node/get-list 等接口路径。
+# 多个地址按顺序尝试。下面是占位域名，不能用于真实请求。
+api_urls = ["https://api.example.invalid"]
+
+# 登录方式选一种：
+#   macOS 自动读取：保留 auto，并确保 WWSS App 已登录。
+#   环境变量注入：设置 SUBLOADER_TOKEN，优先于本文件。
+#   本机手动填写：把 auto 替换为实际 token。
+token = "auto"
+
+# 可选：域名发现接口的完整 URL。没有就保持默认空列表。
+# cloudapi_urls = []
+
+# 可选：个人 Clash 订阅链接，只用于提取分流规则，不用于下载节点。
+# 选择 subscription 模式时填写，或设置 SUBLOADER_SUBSCRIPTION_URL 环境变量。
+# subscription_url = ""
+
+# 连接参数，通常不用修改：
+# tls_verify = false            # 是否校验私有 API 证书；false 为现有兼容设置
+# request_timeout = 15          # 每个请求的下载期限，0.001–300 秒
+# max_response_bytes = 16777216  # 默认每个响应最大 16 MiB，可设置到 64 MiB
+# retry_per_url = 1             # 每个地址额外重试 1 次，即最多请求 2 次
+# fetch_account_info = true     # 同时读取账户资料，保存在私有原始 JSON 中
+
+
+# ── 2. 选择分流规则：先用 builtin 跑通 ───────────────────────
+[rules]
+
+# builtin      → 内置规则；无需订阅链接，也无需 HTTP 服务，适合首次运行。
+# subscription → 从 api.subscription_url 或环境变量提取规则；无需规则 HTTP 服务。
+# github       → 下载公共规则集；需要通过 HTTP 把规则文件提供给 Clash 客户端。
+preset = "builtin"
+
+# 只有 github 模式需要下面这组发布配置。
+# 先取消这两行的注释，再将 preset 改为 github：
+# output_dir = "data/rules"                     # 下载器把规则文件写到这里
+# provider_base_url = "http://127.0.0.1:8000/"  # Clash 从这个 URL 读取规则文件
+#
+# 对应的本机服务示例，在项目根目录另外运行：
+#   python3 -m http.server 8000 --bind 127.0.0.1 --directory data/rules
+# 此时 data/rules/reject.yaml 对应 http://127.0.0.1:8000/reject.yaml。
+# 远程设备使用时，把 URL 换成该设备能访问的服务地址。
+
+# 公共规则下载参数，通常不用修改：
+# tls_verify = true             # 独立于 api.tls_verify，校验规则源和发布服务证书
+# refresh_days = 7              # 本地缓存超过 7 天重新下载，允许 0–3650 天
+# mirror_urls = [
+#   "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/{name}.txt",
+#   "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/{name}.txt",
+# ]
+
+
+# ── 3. 文件输出：一般保留默认位置 ────────────────────────────
+[data]
+
+# 生成的 Clash 和 QX 文件放在哪里。相对路径以项目根目录为基准。
+output_dir = "data/subscriptions"
+
+# 原始节点与账户数据，内含私密信息，不要提交到 GitHub。
+# raw_file = "data/latest-wwss-nodes.json"
+
+[output]
+# clash_file = "WestWorldVPN-clash.yaml"            # Clash 配置文件名
+# quantumultx_file = "WestWorldVPN-quantumultx.txt"  # QX 节点文件名
+# backup_old = true               # 覆盖前保存旧文件为 .bak
+# include_quantumultx_group = true # QX 文件按地区添加注释
+# include_account_info = false    # 订阅头默认隐藏邮箱、到期时间和流量
+# tls_verify = false              # Trojan 节点的证书校验，与 API/规则下载设置独立
+
+
+# ── 4. 失败重试与日志：通常不用修改 ──────────────────────────
+[schedule]
+# max_attempts = 3                # 一次触发最多尝试 3 次，允许 1–20 次
+# retry_interval_minutes = 5.0    # 两次尝试间隔 5 分钟，允许 0–1440 分钟
+# 这里只控制失败重试；每天几点执行，需要另行配置外部调度器。
+
+[log]
+# file = "logs/subloader.log"
+# level = "info"                  # debug / info / warning / error / critical

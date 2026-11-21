@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# 本机配置可能包含 token 和私有订阅地址;共享配置请使用示例文件
+config*.toml
+!config.example.toml
+*.local.toml
+.env
+.env.*
+!.env.example
+
+# 运行产物(含订阅原始 JSON 与日志,内含敏感信息勿提交)
+data/
+logs/
+output/
+outputs/
+subscriptions/
+artifacts/
+latest-wwss-nodes.json
+WestWorldVPN-clash.yaml
+WestWorldVPN-quantumultx.txt
+*.log
+*.log.[0-9]*
+
+# 备份与临时文件
+*.bak
+*.tmp
+*.backup
+*.rollback
+*.lock
+!uv.lock
+
+# Agent 记忆、编辑器与本机设置
+.workbuddy/
+.codex/
+.idea/
+.vscode/
+
+# 私钥与凭据容器
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+credentials*.json
+secrets*.json
+
+# 构建与打包产物
+build/
+dist/
+*.egg-info/
+*.zip
+*.tar
+*.tar.gz
+
+.DS_Store

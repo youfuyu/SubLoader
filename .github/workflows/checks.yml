@@ -1,0 +1,34 @@
+name: Source checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: "0.13.7"
+          python-version: ${{ matrix.python }}
+          enable-cache: false
+      - name: Install locked dependencies
+        run: uv sync --frozen
+      - name: Check published source
+        run: uv run --frozen python scripts/check_release.py
+      - name: Run offline tests
+        run: uv run --frozen python -m unittest discover -s tests -v
