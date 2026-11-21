@@ -20,7 +20,7 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from .config import MAX_RESPONSE_BYTES, is_http_url
+from .config import MAX_RESPONSE_BYTES, MAX_TOKEN_FILE_BYTES, is_http_url
 from . import http_transport
 
 log = logging.getLogger("core.fetch")
@@ -49,10 +49,29 @@ def read_token_from_wwss() -> str | None:
     return None
 
 
+def read_token_from_file(path: Path) -> str:
+    """读取单行 token；显式配置的文件失败时不回退其他账户."""
+    try:
+        if not path.is_file():
+            raise ValueError
+        with path.open("rb") as stream:
+            raw = stream.read(MAX_TOKEN_FILE_BYTES + 1)
+        if len(raw) > MAX_TOKEN_FILE_BYTES:
+            raise ValueError
+        token = raw.decode("utf-8").removesuffix("\n").removesuffix("\r")
+        if not token or any(ord(c) < 33 or ord(c) > 126 for c in token):
+            raise ValueError
+        return token
+    except (OSError, ValueError):
+        raise RuntimeError("token 文件不存在、不可读取或不是有效的单行 token；请运行 ./run.sh login 重新生成") from None
+
+
 def resolve_token(cfg) -> str | None:
     token = cfg.get("api", "token", "auto")
     if token and token != "auto":
         return token
+    if cfg.token_file is not None:
+        return read_token_from_file(cfg.token_file)
     return read_token_from_wwss()
 
 
@@ -170,10 +189,13 @@ def fetch(cfg) -> dict:
     token = resolve_token(cfg)
     if not token:
         raise RuntimeError(
-            "无法获得 token:请在 config.toml [api] token 填写,或保持 auto 并确保 西部世界VPN.app 已登录"
+            "无法获得 token:请配置 [api] token_file 并运行 ./run.sh login，"
+            "或填写 token，或保持 auto 并确保 西部世界VPN.app 已登录"
         )
-    token_source = "环境变量" if "SUBLOADER_TOKEN" in os.environ else (
-        "WWSS 偏好设置(auto)" if cfg.get("api", "token") == "auto" else "本机配置")
+    if cfg.get("api", "token", "auto") not in ("", "auto"):
+        token_source = "环境变量" if "SUBLOADER_TOKEN" in os.environ else "本机配置"
+    else:
+        token_source = "token 文件" if cfg.token_file is not None else "WWSS 偏好设置(auto)"
     log.info("token 来源: %s", token_source)
 
     # 域名发现:成功则把发现结果插到配置列表前面

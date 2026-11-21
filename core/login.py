@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""独立 WWSS 登录脚本（仅使用标准库，Python 3.11+）.
+"""WWSS 登录模块（仅使用标准库，Python 3.11+）.
 
 保持会话 → 下载人工验证码 → 验证邮箱 → 密码登录 → 保存 data.token。
 按已分析的网页协议实现；站点极验需要在官方网页中完成。
@@ -27,10 +27,11 @@ import urllib.request
 import warnings
 import webbrowser
 
+from .config import MAX_TOKEN_FILE_BYTES, PROJECT_ROOT
+
 
 MAX_BYTES = 2 * 1024 * 1024
 USER_AGENT = "Mozilla/5.0 (compatible; SubLoader login)"
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = PROJECT_ROOT / "login.local.toml"
 
 
@@ -223,7 +224,8 @@ class LoginClient:
             "auto_login_days": remember_days, "device_id": self.device_id,
         })
         token = data.get("token")
-        if not isinstance(token, str) or not token or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in token):
+        if (not isinstance(token, str) or not token or len(token) >= MAX_TOKEN_FILE_BYTES
+                or any(ord(c) < 33 or ord(c) > 126 for c in token)):
             raise LoginError("登录成功响应中未包含有效 token")
         return token
 
@@ -259,9 +261,9 @@ def captcha_extension(data: bytes) -> str:
     raise LoginError("验证码接口未返回受支持的图片，可能触发了站点验证")
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("-c", "--config", type=Path, help="本地登录配置（默认 项目根/login.local.toml）")
+def add_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("-c", "--config", type=Path, default=argparse.SUPPRESS,
+                        help="本地登录配置（默认 项目根/login.local.toml）")
     parser.add_argument("--portal", help="覆盖配置中的 HTTPS 门户根地址")
     parser.add_argument("--email", help="登录邮箱；也可用 SUBLOADER_EMAIL 或交互输入")
     parser.add_argument("--output", type=Path, help="覆盖配置中的 token_file，相对路径以调用目录为基准")
@@ -269,9 +271,12 @@ def main(argv: list[str] | None = None) -> int:
                         help="用默认浏览器打开本地验证码图片")
     parser.add_argument("--remember-days", type=int, choices=(0, 30))
     parser.add_argument("--timeout", type=float, help="网络操作超时秒数，最大 120")
-    args = parser.parse_args(argv)
+
+
+def run(args: argparse.Namespace) -> int:
     try:
-        settings, config_path = load_login_config(args.config)
+        config = getattr(args, "config", None)
+        settings, config_path = load_login_config(Path(config) if config is not None else None)
         portal = args.portal if args.portal is not None else settings.get("portal", "")
         if not portal:
             raise LoginError("请在 login.local.toml 的 [login] 中填写 portal，或使用 --portal")
@@ -325,6 +330,12 @@ def main(argv: list[str] | None = None) -> int:
     except OSError:
         print("无法读写登录所需文件；原 token 文件未被部分覆盖", file=sys.stderr)
     return 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_arguments(parser)
+    return run(parser.parse_args(argv))
 
 
 if __name__ == "__main__":

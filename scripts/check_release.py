@@ -103,25 +103,30 @@ def local_private_values(root: Path) -> set[str]:
         if isinstance(value, str) and len(value) >= 8:
             values.update({value, json.dumps(value, ensure_ascii=False)[1:-1], quote(value, safe='')})
 
+    def remember_token_file(value):
+        path = Path(value).expanduser()
+        if not path.is_absolute():
+            path = root / path
+        path = path.resolve()
+        if path.is_relative_to(root.resolve()) and path.is_file():
+            if path.stat().st_size > 65536:
+                raise ValueError('本机 token 文件过大,需要人工审查')
+            remember(path.read_text(encoding='utf-8').strip())
+
     login_path = root / 'login.local.toml'
     if login_path.exists():
         login = tomllib.loads(login_path.read_text(encoding='utf-8')).get('login', {})
         for field in ('portal', 'email', 'password'):
             remember(login.get(field))
-        token_path = Path(login.get('token_file') or 'data/wwss-token.txt').expanduser()
-        if not token_path.is_absolute():
-            token_path = root / token_path
-        token_path = token_path.resolve()
-        if token_path.is_relative_to(root.resolve()) and token_path.is_file():
-            if token_path.stat().st_size > 65536:
-                raise ValueError('本机 token 文件过大,需要人工审查')
-            remember(token_path.read_text(encoding='utf-8').strip())
+        remember_token_file(login.get('token_file') or 'data/wwss-token.txt')
 
     config_path = root / 'config.toml'
     if config_path.exists():
         config = tomllib.loads(config_path.read_text(encoding='utf-8'))
         api = config.get('api', {})
         remember(api.get('token'))
+        if api.get('token_file'):
+            remember_token_file(api['token_file'])
         subscription = api.get('subscription_url', '')
         remember(subscription)
         if isinstance(subscription, str):

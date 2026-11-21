@@ -2,6 +2,7 @@
 
 import base64
 import contextlib
+import copy
 import hashlib
 import io
 import json
@@ -15,7 +16,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest import mock
 from urllib.parse import parse_qs
 
-from scripts import wwss_login as login
+from core import login
+from core import __main__ as cli, fetcher
+from core.config import Config, DEFAULTS
 
 
 def write_config(path, **settings):
@@ -63,6 +66,11 @@ class TestLoginFlow(unittest.TestCase):
                         ("Set-Cookie", "test_session=session-id; Path=/; HttpOnly")])
                 elif self.path == "/portal/account/get-verify-image":
                     self.send(b"\x89PNG\r\n\x1a\nsynthetic-image", "image/png")
+                elif self.path == "/user/node/get-list" and self.headers.get("X-Client-Token") == state["token"]:
+                    self.send(json.dumps({"code": 0, "data": [{
+                        "name": "test-node", "server": "node.example.invalid", "server_port": 443,
+                        "net_type": "TROJAN", "password": "node-password",
+                    }]}).encode())
                 else:
                     self.send(b"{}", status=404)
 
@@ -168,6 +176,32 @@ class TestLoginFlow(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual((root / "out/token.txt").read_text(), "test-token\n")
             self.assertNotIn("test-token", result.stdout + result.stderr)
+
+    def test_core_login_token_file_is_used_by_node_fetch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            login_config = root / "login.local.toml"
+            write_config(login_config, portal=self.portal, email="user@example.invalid",
+                         password="test-password", token_file="private/token.txt", open_captcha=False)
+            environment = {k: v for k, v in os.environ.items()
+                           if k not in {"SUBLOADER_EMAIL", "SUBLOADER_PASSWORD"}}
+            with mock.patch.dict(os.environ, environment, clear=True), \
+                    mock.patch("builtins.input", return_value="abcd"), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(cli.main(["login", "-c", str(login_config)]), 0)
+            settings = copy.deepcopy(DEFAULTS)
+            settings["api"].update(token="auto", token_file=str(root / "private/token.txt"),
+                                   api_urls=[self.portal], cloudapi_urls=[], fetch_account_info=False)
+            cfg = Config(settings, root / "config.toml")
+            self.assertEqual(cfg.validate(), [])
+            with mock.patch.object(fetcher, "read_token_from_wwss") as read_app, \
+                    self.assertLogs("core.fetch", level="INFO") as logs:
+                result = fetcher.fetch(cfg)
+            self.assertEqual(result["nodes_payload"]["data"][0]["name"], "test-node")
+            self.assertEqual(self.state["requests"][-1][2]["X-Client-Token"], "test-token")
+            self.assertIn("token 文件", "\n".join(logs.output))
+            self.assertNotIn("test-token", "\n".join(logs.output))
+            read_app.assert_not_called()
 
     def test_geetest_stops_before_sending_account_data(self):
         self.state["gt"] = True

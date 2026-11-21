@@ -19,10 +19,12 @@ DEFAULT_OUTPUT_DIR = "data/subscriptions"
 RULE_NAMES = ("reject", "direct", "proxy", "cncidr")
 LOG_BACKUPS = 3
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+MAX_TOKEN_FILE_BYTES = 65536
 
 DEFAULTS: dict = {
     "api": {
         "token": "auto",
+        "token_file": "",
         # 实际服务域名仅保存在本机配置,公开源码使用保留域名示例.
         "api_urls": ["https://api.example.invalid"],
         "cloudapi_urls": [],
@@ -127,6 +129,11 @@ class Config:
 
     # -- 常用路径 ----------------------------------------------------
     @property
+    def token_file(self) -> Path | None:
+        value = self.get("api", "token_file", "")
+        return resolve_path(value) if value else None
+
+    @property
     def raw_file(self) -> Path:
         return resolve_path(self._data["data"]["raw_file"])
 
@@ -182,6 +189,10 @@ class Config:
         if (not isinstance(token, str) or not token.strip()
                 or (isinstance(token, str) and any(ord(c) < 32 or ord(c) == 127 for c in token))):
             errors.append("[api] token 必须是 auto 或非空字符串")
+        token_file = self.get("api", "token_file", "")
+        if (not isinstance(token_file, str) or (token_file and not token_file.strip())
+                or (isinstance(token_file, str) and "\x00" in token_file)):
+            errors.append("[api] token_file 必须为空或有效文件路径")
 
         for key in ("api_urls", "cloudapi_urls"):
             urls = self.get("api", key)
@@ -234,11 +245,14 @@ class Config:
                 files += [self.log_path] + [Path(str(self.log_path) + ".%d" % n)
                                             for n in range(1, LOG_BACKUPS + 1)]
                 files += [rules_dir / (name + ".yaml") for name in RULE_NAMES]
+                if self.token_file is not None:
+                    files.append(self.token_file)
                 directories = [self.raw_file.parent, self.output_dir, self.log_path.parent, rules_dir]
                 locks = [self.raw_file.parent / "subloader.lock", rules_dir / ".subloader.lock"]
                 locks += list({path_key(p): p for p in (d / WRITE_LOCK_NAME for d in directories)}.values())
                 check_file_paths(files + locks, directories,
-                                 [self.path or PROJECT_ROOT / "config.toml", PROJECT_ROOT / "config.toml"])
+                                 [self.path or PROJECT_ROOT / "config.toml", PROJECT_ROOT / "config.toml",
+                                  PROJECT_ROOT / "login.local.toml"])
             except (OSError, RuntimeError, ValueError):
                 errors.append("运行文件、备份、日志轮转、规则缓存、锁、目录或配置文件存在路径冲突或无法解析")
         return errors

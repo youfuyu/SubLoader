@@ -13,9 +13,9 @@ GitHub 仓库仅保存源码、离线测试、依赖锁文件和无凭据的配�
 
 复制 `config.example.toml` 后在本机填写实际 API 地址。样例的 API 地址列表、凭据和个人订阅链接均留空,不会包含真实服务或账户信息。配置中的相对数据路径以项目根目录为基准。
 
-登录 token 可继续使用 `auto` 从已登录的 macOS App 读取,也可通过 `SUBLOADER_TOKEN` 注入。个人订阅地址可通过 `SUBLOADER_SUBSCRIPTION_URL` 注入。这两个环境变量优先于 TOML,不会写回配置文件。部署平台应使用其 Secret 设置保存实际值。
+登录 token 可通过 `[api] token_file` 从单行文件读取、使用 `auto` 从已登录的 macOS App 读取,或通过 `SUBLOADER_TOKEN` 注入。显式 token 优先于文件;仅在未配置文件时才读取 macOS App,显式文件读取失败会报错。个人订阅地址可通过 `SUBLOADER_SUBSCRIPTION_URL` 注入。这两个环境变量优先于 TOML,不会写回配置文件。部署平台应使用其 Secret 设置保存实际值。
 
-通过 `./run.sh login` 运行独立登录脚本 `scripts/wwss_login.py`,默认读取项目根目录的 `login.local.toml`。账号密码保存在 `[login]` 的 `email` 和 `password`,token 写入位置由 `token_file` 配置;登录配置建议权限为 `0600`。也支持隐藏终端输入和 `SUBLOADER_PASSWORD` 环境变量,不接受密码命令行参数。会话 Cookie 仅保留在内存中,临时验证码图片在流程结束时删除。默认 token 输出位于已被忽略的 `data/wwss-token.txt`,权限为 `0600`;使用自定义输出路径时也应将该文件保留在本机。脚本不打印密码、token 或服务端原始响应。
+通过 `./run.sh login` 运行核心登录模块 `core/login.py`,默认读取项目根目录的 `login.local.toml`。账号密码保存在 `[login]` 的 `email` 和 `password`,token 写入位置由 `token_file` 配置;节点配置中的 `[api] token_file` 可直接指向该文件。登录配置建议权限为 `0600`。也支持隐藏终端输入和 `SUBLOADER_PASSWORD` 环境变量,不接受密码命令行参数。会话 Cookie 仅保留在内存中,临时验证码图片在流程结束时删除。默认 token 输出位于已被忽略的 `data/wwss-token.txt`,权限为 `0600`;使用自定义输出路径时也应将该文件保留在本机。模块不打印密码、token 或服务端原始响应。
 
 生成的订阅默认不包含账户邮箱、到期时间和流量,账户信息也不写入日志。原始 JSON 与订阅中的节点密码仍属于私有运行数据,必须限制文件和 HTTP 服务访问权限。
 

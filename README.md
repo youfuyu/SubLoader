@@ -16,7 +16,7 @@
 
 ## 环境与安装
 
-需要 Python 3.11 或更新版本,以及 macOS 或支持 `fcntl.flock` 的 Unix 环境。自动读取 App 登录 token 的功能仅用于 macOS;其他环境可通过环境变量或本机配置提供 token。
+需要 Python 3.11 或更新版本,以及 macOS 或支持 `fcntl.flock` 的 Unix 环境。自动读取 App 登录 token 的功能仅用于 macOS;其他环境可通过 token 文件、环境变量或本机配置提供 token。
 
 使用 uv 安装锁定依赖:
 
@@ -27,9 +27,9 @@ cp -n config.example.toml config.toml
 
 在本机 `config.toml` 的 `api.api_urls` 列表中填写实际 API 根地址,需要时填写域名发现接口。样例中的 API 地址列表为空,至少填写一个地址后才能运行。已有本机配置时保留原文件。
 
-首次配置只需关注两项: `api.api_urls` 填 API 根地址,`api.token` 选择登录方式。示例已选择 `rules.preset = "builtin"`,可以先生成订阅,不需要搭建规则 HTTP 服务。生成文件位于 `data/subscriptions/`。跑通后再按示例中的步骤切换规则来源。
+首次配置时,`api.api_urls` 填 API 根地址;使用账号密码登录时,设置 `api.token_file = "data/wwss-token.txt"`,先按下文登录生成文件。已有 token 可填 `api.token`;使用已登录的 macOS App 时,保持 `api.token = "auto"` 并留空 `api.token_file`。示例已选择 `rules.preset = "builtin"`,生成文件位于 `data/subscriptions/`。
 
-凭据可以使用 `SUBLOADER_TOKEN` 和 `SUBLOADER_SUBSCRIPTION_URL` 环境变量注入,优先于 TOML,不会写回文件。部署平台应使用 Secret 设置保存实际值。文件中的 `token = ""` 或 `token = "auto"` 会从已登录的 macOS WWSS App 偏好设置读取 token。节点下载程序不接收账号密码,也不会自动登录或续期 token。需要密码登录时可单独运行下面的登录脚本。
+凭据可以使用 `SUBLOADER_TOKEN` 和 `SUBLOADER_SUBSCRIPTION_URL` 环境变量注入,优先于 TOML,不会写回文件。部署平台应使用 Secret 设置保存实际值。`token = ""` 或 `token = "auto"` 时,优先读取配置的 `token_file`,未配置文件才读取已登录的 macOS App。显式 token（包括环境变量）优先于 token 文件。节点下载不会自动登录或续期 token;密码登录由 `core/login.py` 提供,与分流规则下载一样通过核心命令运行。
 
 ## 登录获取 token
 
@@ -49,15 +49,23 @@ chmod 600 login.local.toml
 
 配置中填好账号密码后,运行时只需输入图片验证码。`open_captcha = true` 会用默认浏览器打开本地验证码图片;设置为 `false` 时自行打开终端显示的图片路径。整个流程共享会话 Cookie,图片在脚本结束时删除。网页初始化数据在 Python 中解码,不会执行网页 JavaScript。
 
-登录成功后,token 原子保存到配置中的 `token_file`（默认 `data/wwss-token.txt`）,文件权限为 `0600`,不会打印到终端。随后运行节点下载（自定义了 token 路径时替换下面的路径）:
+登录成功后,token 原子保存到登录配置中的 `token_file`（默认 `data/wwss-token.txt`）,文件权限为 `0600`,不会打印到终端。在节点下载使用的 `config.toml` 中配置同一个文件:
+
+```toml
+[api]
+token = "auto"
+token_file = "data/wwss-token.txt"
+```
+
+`api.token_file` 的相对路径以项目根目录为基准。登录配置的相对路径以该配置所在目录为基准;自定义登录配置放到其他目录时,可在两份配置里使用同一个绝对路径。配置了文件后,缺失、读取失败或内容无效会报错,不会回退 macOS App。文件内容为单行 token,允许末尾换行。随后直接运行节点下载:
 
 ```sh
-SUBLOADER_TOKEN="$(cat data/wwss-token.txt)" ./run.sh --once
+./run.sh --once
 ```
 
 命令行参数优先于环境变量,环境变量优先于本地配置。可用 `--email` 或 `SUBLOADER_EMAIL` 覆盖邮箱,用 `SUBLOADER_PASSWORD` 覆盖密码;空环境变量会报错。配置未填写邮箱或密码时才会交互输入,密码不回显。`--portal`、`--output`、`--open-captcha`/`--no-open-captcha`、`--remember-days` 和 `--timeout` 可覆盖对应配置;命令行 `--output` 的相对路径以调用目录为基准。记住登录天数仅支持 `0` 和 `30`（默认）,不代表已确认 token 的有效期。
 
-仍可直接运行仅依赖 Python 标准库的 `python3 scripts/wwss_login.py`,支持相同配置和参数。所有远程登录请求校验 HTTPS 证书,登录 POST 不跟随重定向。脚本直连网络,与节点下载程序一致。
+登录功能位于 `core/login.py`,也可用 `python3 -m core login` 或 `python3 -m core.login` 运行,支持相同配置和参数。`run.sh` 统一调用 `python -m core`,登录凭据仍保存在独立的本地配置中。所有远程登录请求校验 HTTPS 证书,登录 POST 不跟随重定向。登录模块直连网络,与节点下载程序一致。
 
 当前实现依据已分析的网页登录协议,已通过本地模拟接口测试,尚未使用真实账号验证。需要人工输入图片验证码;若站点开启极验、额外风控或修改页面协议,脚本会提示失败,需在官方网页登录完成验证。失败时不会自动重试密码或创建账户,也不会更新已有 token 文件。
 
@@ -112,13 +120,14 @@ SubLoader 本身不启动 Web 服务。使用 GitHub 模式时,需要把 `rules.
 
 ## 主要配置
 
-全部 27 个配置项及说明均已在 [config.example.toml](config.example.toml) 中显式列出,直接修改对应值即可。
+全部 28 个配置项及说明均已在 [config.example.toml](config.example.toml) 中显式列出,直接修改对应值即可。
 
 配置文件中,可选字段填写空字符串 `""` 或省略该字段都会使用程序默认值。明确填写的 `false`、`0` 会保留。列表使用 `[]`: `api.cloudapi_urls` 为空时跳过发现,`rules.mirror_urls` 为空时使用默认镜像;必填的 `api.api_urls` 不能为空。`api.subscription_url` 为空时跳过个人订阅规则抓取。环境变量在默认值合并后覆盖配置,因此已设置但为空的 `SUBLOADER_TOKEN` 会报错,不会自动切换到其他凭据来源。
 
 | 配置 | 默认值 | 含义 |
 |---|---|---|
-| `api.token` | `auto` | 自动读取、环境变量或本机手工配置 |
+| `api.token` | `auto` | 显式 token 优先;auto 时读取 token 文件或 macOS App |
+| `api.token_file` | 空字符串 | 可选单行 token 文件,相对路径以项目根目录为基准 |
 | `api.api_urls` | 样例为空列表 | 必须填写至少一个实际 API 根地址 |
 | `api.cloudapi_urls` | 空列表 | 可选域名发现接口 |
 | `api.subscription_url` | 空字符串 | 私有 Clash 订阅地址,用于规则降级源 |

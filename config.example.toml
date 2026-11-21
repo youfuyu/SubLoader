@@ -1,4 +1,4 @@
-# SubLoader 完整配置示例（全部 27 个配置项）
+# SubLoader 完整配置示例（全部 28 个配置项）
 #
 # 首次使用：
 #   1. 复制为 config.toml：cp -n config.example.toml config.toml
@@ -21,11 +21,16 @@
 # 多个地址按顺序尝试，不要追加接口路径或个人订阅参数。
 api_urls = []
 
-# 留空或填写 auto：从已登录的 macOS WWSS App 偏好设置读取 token。
+# 留空或填写 auto：优先读取下方 token_file，未配置文件时读取 macOS WWSS App。
 # 也可以直接填写 token，或用 SUBLOADER_TOKEN 环境变量覆盖。
 # 节点下载程序不接收账号密码，也不会自动登录或续期 token。
-# 可单独运行 scripts/wwss_login.py 获取 token，再通过 SUBLOADER_TOKEN 注入。
+# 可运行 ./run.sh login 生成 token 文件，再配置下方 token_file 读取。
 token = ""
+
+# 可选单行 token 文件；相对路径以项目根目录为准，支持 ~/ 和绝对路径。
+# 使用账号密码登录时填写 "data/wwss-token.txt"，与登录配置的 token_file 指向同一文件。
+# 默认空字符串：使用上面的 token 或 macOS App；显式文件读取失败时会报错。
+token_file = ""
 
 # 可选域名发现接口的完整 URL 列表；留空跳过域名发现。
 cloudapi_urls = []

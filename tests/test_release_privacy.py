@@ -107,6 +107,13 @@ class TestReleaseGuard(unittest.TestCase):
                 values = local_private_values(root)
             self.assertTrue({'user@example.invalid', 'test-password', 'test-token', 'environment-password'} <= values)
 
+    def test_node_config_token_file_is_scanned_without_login_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'config.toml').write_text('[api]\ntoken_file = "private.txt"\n')
+            (root / 'private.txt').write_text('file-test-token\n')
+            self.assertIn('file-test-token', local_private_values(root))
+
     def test_blank_raw_path_still_scans_default_private_snapshot(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

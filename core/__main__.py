@@ -99,6 +99,8 @@ def cmd_rules(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from . import login
+
     parser = argparse.ArgumentParser(
         prog="subloader", description="西部世界VPN 订阅下载与 Clash/QX 配置生成",
         epilog="账号密码登录：./run.sh login（帮助：./run.sh login --help）")
@@ -109,11 +111,15 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument("--once", action="store_true", default=argparse.SUPPRESS,
                        help=argparse.SUPPRESS)
     p_rules = sub.add_parser("rules", help="下载/更新分流规则")
+    p_login = sub.add_parser("login", help="使用本地账号密码配置登录并保存 token")
+    login.add_arguments(p_login)
     for child in (p_run, p_rules):
         child.add_argument("-c", "--config", default=argparse.SUPPRESS,
                            help="配置文件路径")
     args = parser.parse_args(argv)
 
+    if args.command == "login":
+        return login.run(args)
     if args.command == "rules":
         return cmd_rules(args)
     # 无子命令时默认执行一次(带重试)

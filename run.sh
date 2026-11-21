@@ -17,8 +17,4 @@ if [ ! -x "$PY" ]; then
   echo "虚拟环境不存在,且 uv 不可用或同步失败;请先: cd $DIR && uv venv && uv pip install pyyaml" >&2
   exit 1
 fi
-if [ "${1:-}" = "login" ]; then
-  shift
-  exec "$PY" "$DIR/scripts/wwss_login.py" "$@"
-fi
 exec "$PY" -m core "$@"

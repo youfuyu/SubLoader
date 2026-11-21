@@ -30,6 +30,24 @@ class TestConfig(unittest.TestCase):
         self.assertTrue(p.is_absolute())
         self.assertEqual(config_mod.resolve_path("/abs/x").as_posix(), "/abs/x")
 
+    def test_token_file_path_and_write_conflicts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data = copy.deepcopy(config_mod.DEFAULTS)
+            cfg = config_mod.Config(data, root / "config.toml")
+            self.assertIsNone(cfg.token_file)
+            cfg["api"]["token_file"] = "private/token.txt"
+            with mock.patch.object(config_mod, "PROJECT_ROOT", root):
+                self.assertEqual(cfg.token_file, root / "private/token.txt")
+                self.assertEqual(cfg.validate(), [])
+                targets = [cfg.path, cfg.raw_file, cfg.clash_path, cfg.log_path,
+                           cfg.raw_file.with_suffix(".json.bak"), root / "data/rules/reject.yaml",
+                           root / "login.local.toml"]
+                for path in targets:
+                    with self.subTest(path=path):
+                        cfg["api"]["token_file"] = str(path)
+                        self.assertTrue(cfg.validate())
+
     def test_explicit_missing_config_does_not_fall_back(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(FileNotFoundError):
@@ -112,6 +130,8 @@ class TestConfig(unittest.TestCase):
             ("api", "api_urls", ["file:///tmp/a"]),
             ("api", "api_urls", ["https://example.com?token=bad"]),
             ("api", "tls_verify", "false"), ("rules", "preset", "typo"),
+            ("api", "token_file", 123), ("api", "token_file", " "),
+            ("api", "token_file", "bad\x00path"),
             ("rules", "mirror_urls", ["https://example.com/{missing}"]),
             ("output", "clash_file", "../other.yaml"), ("data", "raw_file", None),
             ("output", "quantumultx_file", "WestWorldVPN-clash.yaml"),

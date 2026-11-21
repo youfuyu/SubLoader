@@ -37,6 +37,44 @@ def make_config(root=None):
 
 
 class TestFetcher(unittest.TestCase):
+    def test_token_file_is_read_with_optional_line_ending(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "token.txt"
+            cfg = make_config()
+            cfg["api"]["token_file"] = str(path)
+            for suffix in (b"", b"\n", b"\r\n"):
+                path.write_bytes(b"file-token" + suffix)
+                with mock.patch.object(fetcher, "read_token_from_wwss") as plist:
+                    self.assertEqual(fetcher.resolve_token(cfg), "file-token")
+                plist.assert_not_called()
+
+    def test_explicit_token_takes_precedence_over_file_and_auto_still_reads_app(self):
+        cfg = make_config()
+        cfg["api"].update(token="inline-token", token_file="missing-token.txt")
+        with mock.patch.object(fetcher, "read_token_from_file") as read_file:
+            self.assertEqual(fetcher.resolve_token(cfg), "inline-token")
+        read_file.assert_not_called()
+        cfg["api"].update(token="auto", token_file="")
+        with mock.patch.object(fetcher, "read_token_from_wwss", return_value="app-token"):
+            self.assertEqual(fetcher.resolve_token(cfg), "app-token")
+
+    def test_invalid_token_file_fails_without_fallback_or_secret_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "private-token.txt"
+            cfg = make_config()
+            cfg["api"]["token_file"] = str(path)
+            for raw in (None, b"", b" padded-secret ", b"secret\nextra", b"secret\r\nheader: bad",
+                        b"\xff", b"a" * (fetcher.MAX_TOKEN_FILE_BYTES + 1)):
+                with self.subTest(raw_type=type(raw).__name__):
+                    if raw is not None:
+                        path.write_bytes(raw)
+                    with mock.patch.object(fetcher, "read_token_from_wwss") as plist:
+                        with self.assertRaises(RuntimeError) as raised:
+                            fetcher.resolve_token(cfg)
+                    self.assertNotIn("padded-secret", str(raised.exception))
+                    self.assertNotIn(str(path), str(raised.exception))
+                    plist.assert_not_called()
+
     def test_invalid_responses_fall_back_to_next_domain(self):
         invalid = [None, [], {"code": 1, "message": "private-message"},
                    {"code": 0, "data": {}}, {"code": 0, "data": [{"name": "broken"}]}]
@@ -178,6 +216,17 @@ class TestRunner(unittest.TestCase):
 
 
 class TestCli(unittest.TestCase):
+    def test_login_is_a_core_subcommand_with_config_on_either_side(self):
+        from core import login
+        for args in (["login"], ["-c", "custom.local.toml", "login"],
+                     ["login", "-c", "custom.local.toml"]):
+            with self.subTest(args=args), mock.patch.object(login, "run", return_value=0) as run, \
+                    mock.patch.object(cli, "_load") as node_config:
+                self.assertEqual(cli.main(args), 0)
+                self.assertEqual(str(run.call_args.args[0].config),
+                                 "None" if args == ["login"] else "custom.local.toml")
+                node_config.assert_not_called()
+
     def test_options_work_before_and_after_subcommand(self):
         for args in (["--once", "run"], ["run", "--once"], ["--once"]):
             with self.subTest(args=args), mock.patch.object(cli, "cmd_run", return_value=0) as run:
