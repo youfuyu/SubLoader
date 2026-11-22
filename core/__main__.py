@@ -3,9 +3,8 @@
 用法:
   run.sh                      立即执行一次(失败按配置自动重试)
   run.sh run --once           立即执行一次(不重试)
-  run.sh rules                单独下载/更新分流规则(GitHub 镜像加速)
   run.sh login                从本地登录配置获取并保存 token
-  可选 -c 配置路径;定时由 WorkBuddy agent 自动化触发
+  可选 -c 配置路径;定时由操作系统或外部任务平台触发
 """
 
 from __future__ import annotations
@@ -81,23 +80,6 @@ def cmd_run(args) -> int:
         return 1
 
 
-def cmd_rules(args) -> int:
-    """单独下载/更新分流规则."""
-    from . import rules as rules_mod, store
-
-    cfg = _load(args)
-    log = logging.getLogger("core")
-    log.info("========== 更新分流规则 ==========")
-    try:
-        return 0 if rules_mod.download_all(cfg) else 1
-    except store.BusyError:
-        log.warning("另一实例正在更新规则,本次触发跳过")
-        return 0
-    except Exception:
-        log.exception("分流规则更新失败")
-        return 1
-
-
 def main(argv: list[str] | None = None) -> int:
     from . import login
 
@@ -110,18 +92,14 @@ def main(argv: list[str] | None = None) -> int:
     p_run = sub.add_parser("run", help="立即执行一次")
     p_run.add_argument("--once", action="store_true", default=argparse.SUPPRESS,
                        help=argparse.SUPPRESS)
-    p_rules = sub.add_parser("rules", help="下载/更新分流规则")
     p_login = sub.add_parser("login", help="使用本地账号密码配置登录并保存 token")
     login.add_arguments(p_login)
-    for child in (p_run, p_rules):
-        child.add_argument("-c", "--config", default=argparse.SUPPRESS,
-                           help="配置文件路径")
+    p_run.add_argument("-c", "--config", default=argparse.SUPPRESS,
+                       help="配置文件路径")
     args = parser.parse_args(argv)
 
     if args.command == "login":
         return login.run(args)
-    if args.command == "rules":
-        return cmd_rules(args)
     # 无子命令时默认执行一次(带重试)
     args.once = getattr(args, "once", False)
     return cmd_run(args)

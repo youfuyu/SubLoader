@@ -2,7 +2,6 @@
 
 import copy
 import json
-import os
 import shutil
 import ssl
 import subprocess
@@ -18,10 +17,10 @@ from unittest import mock
 
 import yaml
 
-from core import converter, fetcher, http_transport, rules, runner, store
+from core import converter, fetcher, http_transport, runner, store
 from core.config import Config, DEFAULTS, load_config
 from core.paths import WRITE_LOCK_NAME
-from core.validation import INBOUND_TYPES, SS_METHODS
+from core.validation import SS_METHODS
 
 
 def raw_node(**overrides):
@@ -32,7 +31,6 @@ def raw_node(**overrides):
 def isolated_config(root):
     data = copy.deepcopy(DEFAULTS)
     data['data'].update(raw_file=str(root / 'raw.json'), output_dir=str(root / 'out'))
-    data['rules'].update(preset='builtin', output_dir=str(root / 'rules'))
     data['log']['file'] = str(root / 'app.log')
     return Config(data, root / 'config.toml')
 
@@ -42,12 +40,12 @@ class TestInputBoundaries(unittest.TestCase):
         nodes, _ = converter.normalize_nodes([raw_node()])
         account = {'email': 'user\nexternal-controller: 0.0.0.0:9090\n#',
                    'vip_time_text': 'date\u2028mode: global', 'flow_cycle_left_text': 'a\x00b'}
-        clash = converter.to_clash_config(nodes, account, 'date\nsecret: injected', rules=['MATCH,PROXY'])
+        clash = converter.to_clash_config(nodes, account, 'date\nsecret: injected')
         qx = converter.to_qx_servers(nodes, account, 'date\n[server_remote]')
         parsed = yaml.safe_load(clash)
         self.assertNotIn('external-controller', parsed)
         self.assertNotIn('secret', parsed)
-        self.assertEqual(parsed['mode'], 'rule')
+        self.assertEqual(set(parsed), {'proxies'})
         self.assertNotIn('\x00', qx)
         runner._validate_outputs(clash, qx, 1)
 
@@ -70,26 +68,9 @@ class TestInputBoundaries(unittest.TestCase):
         self.assertEqual(converter.normalize_nodes([
             raw_node(net_type='SS', method='unknown-cipher')])[0], [])
 
-    def test_malformed_subscription_rules_trigger_fallback(self):
-        for rule in ('DOMAIN-SUFFIX,example.com', 'BOGUS,example.com,Proxy',
-                     'IP-CIDR,not-a-network,DIRECT', 'SUB-RULE,(NETWORK,TCP),nested',
-                     'DST-PORT,999999,Proxy', 'DST-PORT,٤٤٣,Proxy', 'SRC-PORT,80-٤٤٣,Proxy',
-                     'IN-TYPE,NOT-A-TYPE,Proxy', 'IN-TYPE,HTTP//SOCKS,Proxy',
-                     'SRC-IP-CIDR6,fd00::/8,DIRECT', 'UID,1000,Proxy',
-                     r'DOMAIN-REGEX,a++,Proxy', r'DOMAIN-REGEX,\u0041,Proxy',
-                     r'DOMAIN-REGEX,a{1001},Proxy'):
-            with self.subTest(rule=rule):
-                self.assertIsNone(converter.extract_clash_rules(yaml.safe_dump({'rules': [rule]})))
-
-    def test_inbound_type_and_ascii_port_rules_are_accepted(self):
-        for rule in ('IN-TYPE,SOCKS/HTTP,Proxy', 'IN-TYPE,http / socks5,Proxy',
-                     'DST-PORT,80/443,Proxy', 'SRC-PORT,1000-2000,Proxy'):
-            with self.subTest(rule=rule):
-                self.assertIsNotNone(converter.extract_clash_rules(yaml.safe_dump({'rules': [rule]})))
-
     def test_self_check_rejects_corrupt_proxy_and_qx_fields(self):
         nodes, _ = converter.normalize_nodes([raw_node()])
-        clash = converter.to_clash_config(nodes, None, 't', rules=['MATCH,PROXY'])
+        clash = converter.to_clash_config(nodes, None, 't')
         qx = converter.to_qx_servers(nodes, None, 't')
         parsed = yaml.safe_load(clash)
         parsed['proxies'].append('bad item')
@@ -101,7 +82,7 @@ class TestInputBoundaries(unittest.TestCase):
             with self.subTest(corrupted=corrupted), self.assertRaises(ValueError):
                 runner._validate_outputs(clash, corrupted, 1)
         parsed = yaml.safe_load(clash)
-        parsed['rules'][0] = 'IP-CIDR,bad,PROXY'
+        parsed['rules'] = ['IP-CIDR,bad,PROXY']
         with self.assertRaises(ValueError):
             runner._validate_outputs(yaml.safe_dump(parsed), qx, 1)
 
@@ -128,9 +109,6 @@ class TestPathBoundaries(unittest.TestCase):
                 if value == 'app.log.1':
                     other['log']['file'] = str(other.output_dir / 'app.log')
                 self.assertTrue(other.validate())
-        cfg['data']['output_dir'] = cfg['rules']['output_dir']
-        cfg['output']['clash_file'] = 'direct.yaml'
-        self.assertTrue(cfg.validate())
 
     def test_case_aliases_are_rejected_before_writing(self):
         self.cfg['output'].update(clash_file='node.yaml', quantumultx_file='NODE.YAML')
@@ -149,14 +127,7 @@ class TestPathBoundaries(unittest.TestCase):
             store.save_raw(self.cfg, {'code': 0}, None)
         self.assertTrue(self.cfg.path.read_text().startswith('[api]'))
 
-    def test_bad_templates_and_retry_overflow_report_config_errors(self):
-        for template in ('https://example.invalid/{name}/{name.missing}',
-                         'https://example.invalid/{name}/{name[bad]}',
-                         'https://example.invalid/{name!r}'):
-            with self.subTest(template=template):
-                self.cfg['rules']['mirror_urls'] = [template]
-                self.assertTrue(self.cfg.validate())
-        self.cfg['rules']['mirror_urls'] = DEFAULTS['rules']['mirror_urls'][:]
+    def test_retry_overflow_reports_config_error(self):
         self.cfg['schedule']['retry_interval_minutes'] = 1e308
         self.assertTrue(self.cfg.validate())
 
@@ -251,9 +222,6 @@ class FixtureHandler(BaseHTTPRequestHandler):
                 self.wfile.write(b'2\r\nok\r\n0\r\n\r\n')
                 return
             payload = b'{"code":0}'
-            if self.path.startswith('/rules/'):
-                values = ['10.%d.0.0/16' % n if 'cncidr' in self.path else '+.x%d.invalid' % n for n in range(100)]
-                payload = yaml.safe_dump({'payload': values}).encode()
             if self.path == '/utf8': payload = b'\xff'
             if self.path == '/large': payload = b'x' * 1024
             if self.path == '/stream-large': payload = b'x' * 1024
@@ -334,56 +302,16 @@ class TestHTTPBoundaries(unittest.TestCase):
             with self.subTest(path=path), self.assertRaises(ValueError):
                 self.read(path)
 
-    def test_public_rules_tls_is_independent_from_api(self):
-        cfg = Config(copy.deepcopy(DEFAULTS), None)
-        cfg['api']['tls_verify'] = False
-        payload = 'payload:\n' + "  - '+.example.invalid'\n" * 150
-        with tempfile.TemporaryDirectory() as tmp:
-            cfg['rules']['output_dir'] = tmp
-            with mock.patch.object(rules, '_build_opener') as opener, \
-                    mock.patch.object(rules, '_http_get_raw', return_value=payload):
-                self.assertTrue(rules._download_one(cfg, 'reject'))
-            opener.assert_called_once_with(True)
-
-    def test_unpublished_rule_service_triggers_builtin_fallback(self):
-        cfg = Config(copy.deepcopy(DEFAULTS), None)
-        cfg['rules']['provider_base_url'] = self.base + '/missing/'
-        cfg['api']['subscription_url'] = ''
-        with mock.patch.object(rules, 'ensure_rules', return_value=True):
-            self.assertEqual(runner._resolve_rules(cfg), (None, None, 'builtin'))
-
-    def test_published_rule_service_is_validated_before_reference(self):
-        cfg = Config(copy.deepcopy(DEFAULTS), None)
-        cfg['rules']['provider_base_url'] = self.base + '/rules/'
-        with mock.patch.object(rules, 'ensure_rules', return_value=True):
-            result, providers, preset = runner._resolve_rules(cfg)
-        self.assertEqual(result, runner.GITHUB_RULESET)
-        self.assertEqual(set(providers), set(rules.RULE_FILES))
-        self.assertEqual(preset, 'github')
-
-
 MIHOMO = shutil.which('mihomo') or '/Applications/Clash Verge.app/Contents/MacOS/verge-mihomo'
 
 
 @unittest.skipUnless(Path(MIHOMO).is_file(), 'optional Mihomo executable is not installed')
 class TestClientCompatibility(unittest.TestCase):
-    def test_supported_inbound_types_match_installed_core(self):
-        nodes, _ = converter.normalize_nodes([raw_node()])
-        ruleset = ['IN-TYPE,' + kind + ',PROXY' for kind in sorted(INBOUND_TYPES)] + ['MATCH,PROXY']
-        clash = converter.to_clash_config(nodes, None, 'test', rules=ruleset)
-        runner._validate_outputs(clash, converter.to_qx_servers(nodes, None, 'test'), 1)
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / 'config.yaml'
-            path.write_text(clash)
-            result = subprocess.run([MIHOMO, '-t', '-d', tmp, '-f', str(path)],
-                                    capture_output=True, text=True, timeout=10)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
     def test_supported_ss_methods_are_accepted_by_installed_core(self):
         raw = [raw_node(name=method, net_type='SS', method=method) for method in sorted(SS_METHODS)]
         nodes, skipped = converter.normalize_nodes(raw)
         self.assertFalse(skipped)
-        clash = converter.to_clash_config(nodes, None, 'test', rules=['MATCH,PROXY'])
+        clash = converter.to_clash_config(nodes, None, 'test')
         runner._validate_outputs(clash, converter.to_qx_servers(nodes, None, 'test'), len(nodes))
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'config.yaml'

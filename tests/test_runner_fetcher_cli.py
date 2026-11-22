@@ -28,10 +28,8 @@ def make_config(root=None):
     data = copy.deepcopy(DEFAULTS)
     data["api"].update(api_urls=["https://first.invalid", "https://second.invalid"], retry_per_url=0,
                        cloudapi_urls=["https://discovery.invalid/first", "https://discovery.invalid/second"])
-    data["rules"]["preset"] = "builtin"
     if root is not None:
         data["data"].update(raw_file=str(root / "raw.json"), output_dir=str(root / "out"))
-        data["rules"]["output_dir"] = str(root / "rules")
         data["log"]["file"] = str(root / "app.log")
     return Config(data, None)
 
@@ -109,18 +107,6 @@ class TestFetcher(unittest.TestCase):
             self.assertEqual(fetcher.discover_api_urls(make_config(), object()), ["https://ok.invalid"])
         self.assertEqual(get.call_count, 2)
 
-    def test_subscription_logs_hide_path_and_exception_details(self):
-        cfg = make_config()
-        cfg["api"]["subscription_url"] = "https://sub.invalid/rss/private-token"
-        for response in ("rules: []", RuntimeError("https://sub.invalid/rss/private-token")):
-            kwargs = {"side_effect": response} if isinstance(response, Exception) else {"return_value": response}
-            with self.subTest(response=type(response).__name__), \
-                    mock.patch.object(fetcher, "_build_opener"), \
-                    mock.patch.object(fetcher, "_http_get_raw", **kwargs), \
-                    self.assertLogs("core.fetch", level="INFO") as logs:
-                fetcher.fetch_subscription_text(cfg)
-            self.assertNotIn("private-token", "\n".join(logs.output))
-
     def test_account_failure_does_not_abort_node_fetch(self):
         cfg = make_config()
         valid = {"code": 0, "data": [make_node()]}
@@ -182,15 +168,10 @@ class TestRunner(unittest.TestCase):
                 runner.run_once(self.cfg)
         self.assert_old_files()
 
-    def test_rule_fallback_chain(self):
-        self.cfg["rules"]["preset"] = "github"
-        with mock.patch.object(runner.rules_mod, "ensure_rules", return_value=False), \
-                mock.patch.object(fetcher, "fetch_subscription_text", return_value="rules: ['MATCH,Proxy']"):
-            rules, providers, preset = runner._resolve_rules(self.cfg)
-        self.assertEqual((rules, providers, preset), (["MATCH,PROXY"], None, "subscription"))
-        with mock.patch.object(runner.rules_mod, "ensure_rules", return_value=False), \
-                mock.patch.object(fetcher, "fetch_subscription_text", return_value=None):
-            self.assertEqual(runner._resolve_rules(self.cfg), (None, None, "builtin"))
+    def test_node_update_does_not_fetch_or_embed_routing(self):
+        with mock.patch.object(fetcher, "fetch", return_value=self.result):
+            self.assertTrue(runner.run_once(self.cfg))
+        self.assertEqual(set(yaml.safe_load(self.cfg.clash_path.read_text())), {"proxies"})
 
     def test_duplicate_names_are_rejected_by_self_check(self):
         nodes, _ = converter.normalize_nodes([make_node("A"), make_node("B")])
@@ -232,11 +213,10 @@ class TestCli(unittest.TestCase):
             with self.subTest(args=args), mock.patch.object(cli, "cmd_run", return_value=0) as run:
                 self.assertEqual(cli.main(args), 0)
                 self.assertTrue(run.call_args.args[0].once)
-        for command in ("run", "rules"):
-            for args in (["-c", "custom.toml", command], [command, "-c", "custom.toml"]):
-                with self.subTest(args=args), mock.patch.object(cli, "cmd_" + command, return_value=0) as run:
-                    self.assertEqual(cli.main(args), 0)
-                    self.assertEqual(run.call_args.args[0].config, "custom.toml")
+        for args in (["-c", "custom.toml", "run"], ["run", "-c", "custom.toml"]):
+            with self.subTest(args=args), mock.patch.object(cli, "cmd_run", return_value=0) as run:
+                self.assertEqual(cli.main(args), 0)
+                self.assertEqual(run.call_args.args[0].config, "custom.toml")
 
     def test_invalid_config_exits_before_logging_or_fetch(self):
         with tempfile.TemporaryDirectory() as tmp:

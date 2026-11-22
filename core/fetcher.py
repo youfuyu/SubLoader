@@ -106,22 +106,6 @@ def _http_get(opener, url: str, token: str | None, timeout: float,
     return json.loads(_http_get_raw(opener, url, timeout, headers, max_bytes))
 
 
-def fetch_subscription_text(cfg) -> str | None:
-    """抓取订阅链接原文(用于提取 clash 分流规则);失败返回 None,不中断主流程."""
-    url = cfg.get("api", "subscription_url", "")
-    if not url:
-        return None
-    opener = _build_opener(bool(cfg.get("api", "tls_verify", False)))
-    try:
-        text = _http_get_raw(opener, url, float(cfg.get("api", "request_timeout", 15)),
-                             max_bytes=cfg.get("api", "max_response_bytes", MAX_RESPONSE_BYTES))
-        log.info("订阅链接抓取成功(%s),%d 字节", _url_host(url), len(text.encode("utf-8")))
-        return text
-    except Exception as exc:
-        log.warning("订阅链接 %s 抓取失败(将回退内置规则): %s", _url_host(url), type(exc).__name__)
-        return None
-
-
 def discover_api_urls(cfg, opener) -> list[str]:
     """请求 cloudapi 拿最新 API 域名;失败返回空列表(调用方回退配置里的 api_urls)."""
     discovered: list[str] = []

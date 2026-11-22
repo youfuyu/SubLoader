@@ -1,6 +1,6 @@
 #!/bin/bash
 # SubLoader 启动器:使用项目内 uv 虚拟环境
-# 用法: ./run.sh [run|rules] [-c 配置路径] [--once]
+# 用法: ./run.sh [run] [-c 配置路径] [--once]
 #       ./run.sh login [-c 本地登录配置路径]
 DIR="$(cd "$(dirname "$0")" && pwd)"
 PY="$DIR/.venv/bin/python"

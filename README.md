@@ -1,18 +1,19 @@
 # SubLoader
 
-基于 Python 的 WWSS 兼容订阅下载与转换工具,输出 Clash Verge / Mihomo 配置及 Quantumult X 节点文件。
+基于 Python 的 WWSS 兼容订阅下载与转换工具,输出 Clash / Mihomo 节点订阅及 Quantumult X 节点文件,分组与分流由独立 YAML 扩展配置维护。
 
 仓库只包含源码、离线测试、依赖锁文件和无凭据的配置示例。实际服务域名、登录 token、个人订阅链接和运行数据保存在使用者本机。
 
 ## 功能
 
 - 通过可配置的域名发现接口和备用 API 获取节点,支持 Trojan 与基础 Shadowsocks 节点。
-- 校验节点、稳定按地区排序,处理重名和代理组名称冲突。
-- 输出 Clash 的 PROXY/AUTO 分组及 QX 节点引用文件。
-- 分流规则按 GitHub 规则集、订阅规则、内置规则逐级降级。
+- 校验节点、先按地区优先级排列,同地区内直接按完整名称升序,处理重名和代理组名称冲突。
+- Clash 节点订阅、分组配置、分流配置三份 YAML 文件独立维护。
 - 校验通过后提交原始 JSON 与两份订阅,写入异常时回滚,并保留最近一次备份。
-- 认证重定向保护、独立规则 TLS 校验、响应大小限制及严格 UTF-8 解码。
+- 认证重定向保护、响应大小限制及严格 UTF-8 解码。
 - 跨配置写入互斥,以及不访问外部网络的回归测试。
+
+节点排序优先级为香港、台湾、日本、美国、新加坡、韩国、英国、法国、德国、加拿大、澳大利亚;其余已识别地区按首次出现的地区顺序排列,未识别地区最后。每个地区内直接按完整节点名称的字符串升序比较（如 A117 在 A83 前）,Clash 和 QX 使用相同顺序。
 
 ## 环境与安装
 
@@ -27,9 +28,9 @@ cp -n config.example.toml config.toml
 
 在本机 `config.toml` 的 `api.api_urls` 列表中填写实际 API 根地址,需要时填写域名发现接口。样例中的 API 地址列表为空,至少填写一个地址后才能运行。已有本机配置时保留原文件。
 
-首次配置时,`api.api_urls` 填 API 根地址;使用账号密码登录时,设置 `api.token_file = "data/wwss-token.txt"`,先按下文登录生成文件。已有 token 可填 `api.token`;使用已登录的 macOS App 时,保持 `api.token = "auto"` 并留空 `api.token_file`。示例已选择 `rules.preset = "builtin"`,生成文件位于 `data/subscriptions/`。
+首次配置时,`api.api_urls` 填 API 根地址;使用账号密码登录时,设置 `api.token_file = "data/wwss-token.txt"`,先按下文登录生成文件。已有 token 可填 `api.token`;使用已登录的 macOS App 时,保持 `api.token = "auto"` 并留空 `api.token_file`。生成文件位于 `data/subscriptions/`。Clash 节点订阅需配合独立的分组与分流 YAML 扩展配置使用,见下文。
 
-凭据可以使用 `SUBLOADER_TOKEN` 和 `SUBLOADER_SUBSCRIPTION_URL` 环境变量注入,优先于 TOML,不会写回文件。部署平台应使用 Secret 设置保存实际值。`token = ""` 或 `token = "auto"` 时,优先读取配置的 `token_file`,未配置文件才读取已登录的 macOS App。显式 token（包括环境变量）优先于 token 文件。节点下载不会自动登录或续期 token;密码登录由 `core/login.py` 提供,与分流规则下载一样通过核心命令运行。
+凭据可以使用 `SUBLOADER_TOKEN` 环境变量注入,优先于 TOML,不会写回文件。部署平台应使用 Secret 设置保存实际值。`token = ""` 或 `token = "auto"` 时,优先读取配置的 `token_file`,未配置文件才读取已登录的 macOS App。显式 token（包括环境变量）优先于 token 文件。节点下载不会自动登录或续期 token;密码登录由 `core/login.py` 提供,通过独立的核心命令运行。
 
 ## 登录获取 token
 
@@ -95,9 +96,6 @@ Skill 调用 `./run.sh login --agent`:登录模块输出 `captcha_required` JSON
 # 指定配置;-c 也可以位于子命令之后
 ./run.sh run -c /path/to/config.toml --once
 
-# 强制下载/更新规则缓存
-./run.sh rules
-
 # 使用本地账号密码配置登录并保存 token
 ./run.sh login
 ```
@@ -107,36 +105,29 @@ Skill 调用 `./run.sh login --agent`:登录模块输出 `captcha_required` JSON
 默认输出:
 
 - `data/latest-wwss-nodes.json`:原始节点与可选账户数据。
-- `data/subscriptions/WestWorldVPN-clash.yaml`:完整 Clash 配置。
+- `data/subscriptions/WestWorldVPN-clash.yaml`:只包含 `proxies` 的 Clash 节点订阅。
 - `data/subscriptions/WestWorldVPN-quantumultx.txt`:QX 节点引用文件。
-- `data/rules/`:规则缓存。
 - `logs/subloader.log`:运行日志,2 MiB × 3 份轮转备份。
 
 这些都是本机运行数据,已从 Git 提交范围排除。生成的订阅默认不包含账户邮箱、到期时间和流量,但节点密码仍是必要的私有数据。
 
-## 分流与 HTTP 服务
+## Clash 三份文件独立维护
 
-`rules.preset` 支持:
-
-| 模式 | 行为 |
+| 文件 | 职责 |
 |---|---|
-| `github` | 下载四类规则集,通过 rule-providers 引用发布 URL;不可用时降级 |
-| `subscription` | 从本机配置或环境变量提供的 Clash 订阅提取规则;无效时降级 |
-| `builtin` | 局域网/国内直连,其他走代理 |
+| `WestWorldVPN-clash.yaml`（位于配置的输出目录） | 只提供节点,每次抓取更新 |
+| [clash/groups.yaml](clash/groups.yaml) | 地区筛选、自动测速、手动选择分组 |
+| [clash/routing.yaml](clash/routing.yaml) | 分流规则顺序、远程规则集、缓存与更新周期 |
 
-规则源使用 [Loyalsoldier/clash-rules](https://github.com/Loyalsoldier/clash-rules),默认通过配置中的镜像下载。规则缓存过期时重新下载,下载失败只复用有效旧缓存。
+安装方式:导入节点订阅,将 `groups.yaml` 保存到 **全局扩展配置（YAML）**;把 `routing.yaml` 保存到 **该订阅的扩展配置（YAML）**,然后应用该订阅。节点订阅可使用本机链接 `http://127.0.0.1:8000/pages/subscriptions/WestWorldVPN-clash.yaml`,使用其他服务地址时再调整。订阅名称可自行设置,各组通过 `include-all-proxies` 引入当前订阅的节点,地区组再用 `filter` 筛选。分组文件不配置订阅地址,不会重复下载节点。生成的节点文件仍按地区和名称排序,组内显示顺序由内核及客户端排序设置决定。
 
-SubLoader 本身不启动 Web 服务。使用 GitHub 模式时,需要把 `rules.output_dir` 交给现有静态 HTTP 服务,并设置对应的 `rules.provider_base_url`。与其他订阅服务集成时,同时调整订阅输出目录和规则目录。
-
-生成配置前会检查发布端是否提供四份有效规则。服务未启动、路径不匹配或内容无效时,即使本地缓存存在也会降级。客户端仍须能访问配置中的 URL;远程设备的回环地址不会指向下载器所在机器。
-
-订阅模式支持可独立转换的常见规则。复杂逻辑、子规则、平台相关规则或不兼容的正则会整组降级。引用外部 rule-providers 的 RULE-SET 会跳过。
+节点订阅不再包含分组或分流配置,需要先安装两份扩展。规则文件由 Mihomo 从分流配置指定的公共 HTTPS 地址下载,不需要本项目再提供 HTTP 规则服务。后续修改分组或路由只需更新相应扩展,不用重新抓取节点。详细步骤、分组层级和各文件的配置项见 [clash/README.md](clash/README.md)。
 
 ## 主要配置
 
-全部 28 个配置项及说明均已在 [config.example.toml](config.example.toml) 中显式列出,直接修改对应值即可。
+全部 21 个配置项及说明均已在 [config.example.toml](config.example.toml) 中显式列出,直接修改对应值即可。
 
-配置文件中,可选字段填写空字符串 `""` 或省略该字段都会使用程序默认值。明确填写的 `false`、`0` 会保留。列表使用 `[]`: `api.cloudapi_urls` 为空时跳过发现,`rules.mirror_urls` 为空时使用默认镜像;必填的 `api.api_urls` 不能为空。`api.subscription_url` 为空时跳过个人订阅规则抓取。环境变量在默认值合并后覆盖配置,因此已设置但为空的 `SUBLOADER_TOKEN` 会报错,不会自动切换到其他凭据来源。
+配置文件中,可选字段填写空字符串 `""` 或省略该字段都会使用程序默认值。明确填写的 `false`、`0` 会保留。列表使用 `[]`: `api.cloudapi_urls` 为空时跳过发现,必填的 `api.api_urls` 不能为空。环境变量在默认值合并后覆盖配置,因此已设置但为空的 `SUBLOADER_TOKEN` 会报错,不会自动切换到其他凭据来源。
 
 | 配置 | 默认值 | 含义 |
 |---|---|---|
@@ -144,12 +135,9 @@ SubLoader 本身不启动 Web 服务。使用 GitHub 模式时,需要把 `rules.
 | `api.token_file` | 空字符串 | 可选单行 token 文件,相对路径以项目根目录为基准 |
 | `api.api_urls` | 样例为空列表 | 必须填写至少一个实际 API 根地址 |
 | `api.cloudapi_urls` | 空列表 | 可选域名发现接口 |
-| `api.subscription_url` | 空字符串 | 私有 Clash 订阅地址,用于规则降级源 |
 | `api.tls_verify` | `false` | 私有 API 的兼容设置,可按服务端证书情况开启 |
 | `api.request_timeout` | `15` | 单个请求共享的下载期限,0.001–300 秒 |
 | `api.max_response_bytes` | `16777216` | 响应体上限,最大 64 MiB |
-| `rules.tls_verify` | `true` | 公共规则和发布服务独立校验证书 |
-| `rules.refresh_days` | `7` | 缓存刷新周期,0–3650 天 |
 | `output.backup_old` | `true` | 保存订阅旧版本为 `.bak` |
 | `output.include_account_info` | `false` | 是否把账户资料放入生成的订阅头 |
 | `output.tls_verify` | `false` | 生成的 Trojan 节点是否校验证书 |
@@ -158,15 +146,15 @@ SubLoader 本身不启动 Web 服务。使用 GitHub 模式时,需要把 `rules.
 
 `api.retry_per_url` 范围为 0–10。请求的连接、TLS、响应头/体与重定向共享期限;系统 DNS 解析阻塞仍由操作系统控制。
 
-显式配置不存在、格式错误、字段无效或路径冲突时以退出码 `2` 结束。路径检查覆盖配置、原始文件、订阅及备份、规则缓存、日志及轮转文件、锁文件和目录,并保守拒绝大小写或 Unicode 正规形式别名。
+显式配置不存在、格式错误、字段无效或路径冲突时以退出码 `2` 结束。路径检查覆盖配置、原始文件、订阅及备份、日志及轮转文件、锁文件和目录,并保守拒绝大小写或 Unicode 正规形式别名。
 
 ## 定时与可靠性
 
 程序按次执行,不内置常驻调度器。可使用操作系统调度器或外部任务平台触发,失败重试由 `[schedule]` 控制。执行时应使用能访问配置中服务的网络出口。
 
-执行全程持有运行锁,规则更新单独加锁。提交时按固定顺序获取各写入目录的 `.subloader-write.lock`,不同配置共享输出目录时也不能交叉提交。
+执行全程持有运行锁。提交时按固定顺序获取各写入目录的 `.subloader-write.lock`,不同配置共享输出目录时也不能交叉提交。
 
-自检包含节点类型、数量、名称、地址、端口、加密方法、规则参数/CIDR、代理组和规则提供器引用,以及 Clash/QX 地址、密码、名称和 TLS 参数的一致性。密码不会被裁剪或强制转换,无法无损表示的节点会跳过。
+节点订阅自检包含节点类型、数量、名称、地址、端口、加密方法,以及 Clash/QX 地址、密码、名称和 TLS 参数的一致性。分组与分流扩展另外执行组合测试和 Mihomo 兼容校验。密码不会被裁剪或强制转换,无法无损表示的节点会跳过。
 
 可捕获的写入异常会回滚。多文件替换不保证断电或强制终止时的版本一致;回滚失败会保留 `.rollback` 恢复副本并记录位置。
 

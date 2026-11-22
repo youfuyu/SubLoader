@@ -7,85 +7,24 @@ import logging
 
 import yaml
 
-from . import converter, fetcher, rules as rules_mod, store
-from .config import is_http_url
-from .validation import BUILTIN_POLICIES, SS_METHODS, host_value, parse_rule, qx_field
+from . import converter, fetcher, store
+from .validation import BUILTIN_POLICIES, SS_METHODS, host_value, qx_field
 
 log = logging.getLogger("core.run")
-
-# github preset 的 RULE-SET 规则(引用 rule-providers)
-GITHUB_RULESET = [
-    "RULE-SET,reject,REJECT",
-    "RULE-SET,direct,DIRECT",
-    "RULE-SET,proxy,PROXY",
-    "GEOIP,LAN,DIRECT,no-resolve",
-    "RULE-SET,cncidr,DIRECT",
-    "MATCH,PROXY",
-]
-
-
-def _github_rule_providers(cfg) -> dict:
-    """基于本地规则文件构建 rule-providers(mihomo 按需拉取并缓存)."""
-    base = str(cfg.get("rules", "provider_base_url", "http://127.0.0.1:8000/pages/rules/"))
-    if not base.endswith("/"):
-        base += "/"
-    providers = {}
-    for name, meta in rules_mod.RULE_FILES.items():
-        providers[name] = {
-            "type": "http",
-            "behavior": meta["behavior"],
-            "format": "yaml",
-            "url": base + name + ".yaml",
-            "path": "./ruleset/%s.yaml" % name,
-            "interval": 86400,
-        }
-    return providers
-
-
-def _resolve_rules(cfg):
-    """按 preset 链解析分流规则:github(下载/复用本地规则文件) ->
-    subscription(机场订阅提取) -> builtin(内置极简).
-
-    返回 (rules, rule_providers, 实际使用的 preset 描述).
-    """
-    preset = str(cfg.get("rules", "preset", "github"))
-
-    if preset == "github":
-        if rules_mod.ensure_rules(cfg) and rules_mod.providers_accessible(cfg):
-            log.info("分流规则: github rule-providers(reject/direct/proxy/cncidr)")
-            return GITHUB_RULESET, _github_rule_providers(cfg), "github"
-        log.warning("github 规则缓存或 HTTP 服务不可用,降级到 subscription")
-
-    if preset in ("github", "subscription"):
-        sub_text = fetcher.fetch_subscription_text(cfg)
-        if sub_text:
-            sub_rules = converter.extract_clash_rules(sub_text)
-            if sub_rules:
-                log.info("分流规则: 机场订阅提取 %d 条", len(sub_rules))
-                return sub_rules, None, "subscription"
-            log.warning("订阅链接内容不含 rules(非 clash 配置)")
-        else:
-            log.warning("订阅链接抓取失败")
-        log.info("降级到内置极简分流规则")
-        return None, None, "builtin"
-
-    # preset == "builtin" 或未知值
-    log.info("分流规则: 内置极简")
-    return None, None, "builtin"
 
 
 def _validate_outputs(clash_text: str, qx_text: str, expected_count: int) -> None:
     config = yaml.safe_load(clash_text)
     if not isinstance(config, dict) or not isinstance(config.get("proxies"), list):
         raise ValueError("Clash proxies 格式无效")
-    if set(config) - {"mixed-port", "allow-lan", "mode", "log-level", "proxies", "proxy-groups", "rules", "rule-providers"}:
-        raise ValueError("Clash 包含生成器未声明的配置项")
+    if set(config) != {"proxies"}:
+        raise ValueError("Clash 节点订阅只允许包含 proxies;分组和分流由独立扩展维护")
     proxies = config["proxies"]
     if expected_count < 1 or len(proxies) != expected_count or any(not isinstance(p, dict) for p in proxies):
         raise ValueError("Clash 节点数量或条目类型无效")
     names = [p.get("name") for p in proxies]
     if (any(not qx_field(n) for n in names)
-            or len(set(names)) != expected_count):
+            or len(set(names)) != expected_count or set(names) & BUILTIN_POLICIES):
         raise ValueError("Clash 节点数量或名称唯一性自检失败")
     for proxy in proxies:
         host_value(proxy.get("server"))
@@ -102,39 +41,6 @@ def _validate_outputs(clash_text: str, qx_text: str, expected_count: int) -> Non
                 host_value(proxy["sni"])
         else:
             raise ValueError("Clash 节点类型无效")
-    groups = config.get("proxy-groups", [])
-    if (not isinstance(groups, list) or len(groups) != 2
-            or any(not isinstance(g, dict) or not qx_field(g.get("name")) for g in groups)):
-        raise ValueError("Clash 代理组格式无效")
-    group_names = [g["name"] for g in groups]
-    if (set(group_names) != {"PROXY", "AUTO"}
-            or set(names) & BUILTIN_POLICIES
-            or len(set(names + group_names)) != len(names) + len(group_names)):
-        raise ValueError("Clash 代理组和节点重名")
-    policies = set(names + group_names) | BUILTIN_POLICIES
-    for group in groups:
-        refs = group.get("proxies")
-        if (group.get("type") != {"PROXY": "select", "AUTO": "url-test"}[group["name"]]
-                or not isinstance(refs, list) or not refs
-                or any(not isinstance(p, str) or p not in policies for p in refs)):
-            raise ValueError("Clash 代理组引用不存在的节点")
-    providers = config.get("rule-providers", {})
-    if not isinstance(providers, dict) or any(
-            not isinstance(p, dict) or p.get("behavior") not in ("domain", "ipcidr")
-            or not is_http_url(p.get("url")) for p in providers.values()):
-        raise ValueError("Clash rule-providers 格式无效")
-    rules = config.get("rules")
-    if not isinstance(rules, list) or not rules:
-        raise ValueError("Clash rules 为空")
-    for rule in rules:
-        parts, idx = parse_rule(rule)
-        policy = parts[idx]
-        if policy.strip() not in policies:
-            raise ValueError("Clash 规则引用不存在的策略")
-        if parts[0] == "RULE-SET" and (len(parts) < 3 or parts[1] not in providers):
-            raise ValueError("Clash 规则引用不存在的 rule-provider")
-    if not any(rule.startswith("MATCH,") for rule in rules):
-        raise ValueError("Clash 缺少 MATCH 兜底规则")
     content = [line for line in qx_text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
     lines = [line for line in content if line.startswith(("trojan=", "shadowsocks="))]
     if len(lines) != expected_count or len(content) != expected_count:
@@ -202,19 +108,9 @@ def run_once(cfg) -> bool:
         return False
     log.info("有效节点 %d 个(跳过 %d 个)", len(nodes), len(skipped))
 
-    # 3. 转换:分流规则按 preset 优先级链 github -> subscription -> builtin
-    clash_rules, rule_providers, preset_used = _resolve_rules(cfg)
-    preset_notes = {
-        "github": "github rule-providers(Loyalsoldier/clash-rules,引用 pages/rules/)",
-        "subscription": "机场订阅提取(内嵌)",
-        "builtin": "内置极简",
-    }
-
+    # 3. 仅转换节点;分组和分流由 Clash Verge 的独立扩展处理.
     metadata = account if cfg.get("output", "include_account_info", False) else None
-    clash_text = converter.to_clash_config(
-        nodes, metadata, generated_at,
-        rules=clash_rules, rule_providers=rule_providers,
-        rules_note=preset_notes.get(preset_used, preset_used))
+    clash_text = converter.to_clash_config(nodes, metadata, generated_at)
     qx_text = converter.to_qx_servers(
         nodes, metadata, generated_at,
         group=bool(cfg.get("output", "include_quantumultx_group", True)),

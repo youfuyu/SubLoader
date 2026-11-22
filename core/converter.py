@@ -8,14 +8,11 @@ WWSS get-list 节点字段(实测):
 
 from __future__ import annotations
 
-import logging
 import re
 import urllib.parse
 
 from .validation import (BUILTIN_POLICIES, SS_METHODS, comment_text, host_value,
-                         parse_rule, qx_field)
-
-log = logging.getLogger("core.convert")
+                         qx_field)
 
 # QX 节点行格式对齐 qx-sub-converter 的 sub-resource-parser.js:
 # trojan=host:port, password=PWD, over-tls=true, tls-host=SNI, tls-verification=false, tag=NAME
@@ -42,9 +39,13 @@ COUNTRY_CODES = {
     "ES": "西班牙", "PO": "波兰", "PL": "波兰", "IT": "意大利", "IN": "印度",
     "TR": "土耳其", "NL": "荷兰", "MX": "墨西哥", "SW": "瑞典", "RU": "俄罗斯",
 }
-# 输出排序:常用地区在前,未列出的按 API 首次出现顺序排在后面,"其他"垫底
+# 常用地区优先;其他已识别地区按 API 首次出现顺序排列,未识别地区最后.
 REGION_ORDER = ["香港", "台湾", "日本", "美国", "新加坡", "韩国",
                 "英国", "法国", "德国", "加拿大", "澳大利亚"]
+
+# 默认 YAML 分组的保留名,避免节点与代理组重名导致 Mihomo 拒绝加载.
+CLASH_GROUP_NAMES = {"节点选择", "自动选择", "手动选择"} | {
+    "自动选择[%s]" % code for code in ("HK", "JP", "TW", "US")}
 
 _CODE_RE = re.compile(r"(?<![A-Z])([A-Z]{2})(?![A-Z])")
 
@@ -62,14 +63,15 @@ def detect_region(name: str) -> str:
 
 
 def sort_by_region(nodes: list) -> list:
-    """稳定排序:按 REGION_ORDER 优先级排地区,地区内保持 API 原始顺序."""
-    first_seen: dict = {}
+    """先按地区优先级,再在同地区内直接按完整节点名称比较."""
+    priority = {region: index for index, region in enumerate(REGION_ORDER)}
+    first_seen = {}
     for node in nodes:
         first_seen.setdefault(node["region"], len(first_seen))
-    priority = {r: i for i, r in enumerate(REGION_ORDER)}
-    return sorted(nodes, key=lambda n: (
-        priority.get(n["region"], len(REGION_ORDER) + (n["region"] == "其他")),
-        first_seen[n["region"]],
+    return sorted(nodes, key=lambda node: (
+        priority.get(node["region"], len(REGION_ORDER) + (node["region"] == "其他")),
+        first_seen[node["region"]],
+        node["name"],
     ))
 
 
@@ -165,8 +167,8 @@ def normalize_nodes(raw_nodes: list, prefer: str = "ip", tls_verify: bool | None
         except InvalidNode as exc:
             skipped.append("节点 #%d: %s" % (idx, exc))
 
-    reserved = {n["name"] for n in valid} | _BUILTIN_POLICIES | {"PROXY", "AUTO"}
-    used = _BUILTIN_POLICIES | {"PROXY", "AUTO"}
+    used = BUILTIN_POLICIES | CLASH_GROUP_NAMES | {"PROXY", "AUTO"}
+    reserved = {n["name"] for n in valid} | used
     seen: dict = {}
     for node in valid:
         base = node["name"]
@@ -180,7 +182,6 @@ def normalize_nodes(raw_nodes: list, prefer: str = "ip", tls_verify: bool | None
             node["name"] = candidate
         used.add(node["name"])
 
-    # 地区排序:常用地区在前,地区内保持 API 原始顺序
     valid = sort_by_region(valid)
     return valid, skipped
 
@@ -216,104 +217,17 @@ def build_clash_proxies(nodes: list) -> list:
     return proxies
 
 
-CLASH_RULES = [
-    "IP-CIDR,192.168.0.0/16,DIRECT,no-resolve",
-    "IP-CIDR,10.0.0.0/8,DIRECT,no-resolve",
-    "IP-CIDR,172.16.0.0/12,DIRECT,no-resolve",
-    "IP-CIDR,127.0.0.0/8,DIRECT,no-resolve",
-    "GEOIP,LAN,DIRECT,no-resolve",
-    "GEOIP,CN,DIRECT",
-    "MATCH,PROXY",
-]
-
-# clash 内置策略名(非代理组),重写订阅策略时保留
-_BUILTIN_POLICIES = BUILTIN_POLICIES
-
-
-def extract_clash_rules(text: str):
-    """从机场订阅的 clash 配置文本中提取分流规则.
-
-    - 订阅规则里的代理组名(如 "Proxy")重写为本配置的 "PROXY" 组
-    - DIRECT/REJECT 等内置策略原样保留;no-resolve 等尾部参数保留
-    - RULE-SET 规则因缺少 rule-providers 定义会被跳过(当前机场未使用)
-    返回规则列表;内容不是含 rules 的 clash 配置时返回 None.
-    """
-    import yaml
-
-    try:
-        data = yaml.safe_load(text)
-    except Exception:
-        return None
-    if not isinstance(data, dict) or not isinstance(data.get("rules"), list):
-        return None
-
-    rules, skipped_ruleset = [], 0
-    for item in data["rules"]:
-        if not isinstance(item, str):
-            return None
-        rule = item.strip()
-        if not rule:
-            continue
-        if rule.split(",", 1)[0] == "RULE-SET":
-            skipped_ruleset += 1
-            continue
-        try:
-            segs, idx = parse_rule(rule)
-        except ValueError:
-            log.warning("订阅包含无效或无法独立转换的规则,整组回退")
-            return None
-        if segs[idx].strip() not in _BUILTIN_POLICIES:
-            segs[idx] = "PROXY"
-        rules.append(",".join(segs))
-    if skipped_ruleset:
-        log.warning("跳过 %d 条 RULE-SET 规则(订阅未提供 rule-providers)", skipped_ruleset)
-    if rules and not any(rule.startswith("MATCH,") for rule in rules):
-        rules.append("MATCH,PROXY")
-    return rules or None
-
-
-def to_clash_config(nodes: list, account: dict | None, generated_at: str,
-                    rules: list | None = None,
-                    rule_providers: dict | None = None,
-                    rules_note: str = "") -> str:
-    """生成 Clash Verge 可直接导入的完整配置 YAML.
-
-    rules 传入时使用外部规则(订阅提取或 RULE-SET 引用),否则回退内置极简规则;
-    rule_providers 传入时同时写入 rule-providers 段(配合 RULE-SET 规则);
-    rules_note 写入文件头注明规则来源.
-    """
+def to_clash_config(nodes: list, account: dict | None, generated_at: str) -> str:
+    """生成仅含 proxies 的 Clash 节点订阅;分组和分流使用独立扩展文件."""
     import yaml
 
     proxies = build_clash_proxies(nodes)
-    names = [p["name"] for p in proxies]
-    config = {
-        "mixed-port": 7890,
-        "allow-lan": False,
-        "mode": "rule",
-        "log-level": "info",
-        "proxies": proxies,
-        "proxy-groups": [
-            {"name": "PROXY", "type": "select", "proxies": ["AUTO"] + names},
-            {
-                "name": "AUTO",
-                "type": "url-test",
-                "url": "http://www.gstatic.com/generate_204",
-                "interval": 300,
-                "tolerance": 50,
-                "proxies": names,
-            },
-        ],
-        "rules": rules if rules else CLASH_RULES,
-    }
-    if rule_providers:
-        config["rule-providers"] = rule_providers
+    config = {"proxies": proxies}
     header_lines = [
-        "# Clash 配置 - SubLoader 自动生成",
+        "# Clash 节点订阅 - SubLoader 自动生成",
         "# 生成时间: %s" % comment_text(generated_at),
         "# 节点数: %d" % len(proxies),
     ]
-    if rules_note:
-        header_lines.append("# 分流规则: %s" % comment_text(rules_note))
     if account:
         header_lines.append("# 账户: %s | 到期: %s | 流量: %s" % (
             comment_text(account.get("email", "?")),

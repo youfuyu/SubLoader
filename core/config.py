@@ -7,7 +7,6 @@ import errno
 import math
 import os
 import tomllib
-from string import Formatter
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -16,7 +15,6 @@ from .paths import WRITE_LOCK_NAME, check_file_paths, path_key
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 DEFAULT_OUTPUT_DIR = "data/subscriptions"
-RULE_NAMES = ("reject", "direct", "proxy", "cncidr")
 LOG_BACKUPS = 3
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 MAX_TOKEN_FILE_BYTES = 65536
@@ -33,8 +31,6 @@ DEFAULTS: dict = {
         "max_response_bytes": MAX_RESPONSE_BYTES,
         "retry_per_url": 1,
         "tls_verify": False,
-        # 订阅链接(clash 配置):转换时从中提取分流规则写入生成的 clash.yaml
-        "subscription_url": "",
     },
     "data": {
         # 只保留一份有效的原始 JSON(下载且校验有效才覆盖)
@@ -56,22 +52,6 @@ DEFAULTS: dict = {
         "retry_interval_minutes": 5.0,
         # 最多尝试次数(含首次)
         "max_attempts": 3,
-    },
-    "rules": {
-        "tls_verify": True,
-        # 分流规则来源:github(rule-providers,推荐) | subscription(机场订阅) | builtin(内置极简)
-        "preset": "github",
-        # 规则文件落盘目录(供 Clash Verge 运行时经 rule-providers 拉取)
-        "output_dir": "data/rules",
-        # rule-providers 引用的基础 URL(本机 Flask 静态服务;外网可换 ngrok 地址)
-        "provider_base_url": "http://127.0.0.1:8000/pages/rules/",
-        # 镜像列表(按序尝试,{name} 为规则名);默认 jsdelivr CDN 优先 + GitHub 直连兜底
-        "mirror_urls": [
-            "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/{name}.txt",
-            "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/{name}.txt",
-        ],
-        # 本地规则超过 N 天未更新则重新下载
-        "refresh_days": 7,
     },
     "log": {
         "file": "logs/subloader.log",
@@ -177,12 +157,10 @@ class Config:
         number("api", "retry_per_url", 0, 10, integer=True)
         number("schedule", "max_attempts", 1, 20, integer=True)
         number("schedule", "retry_interval_minutes", 0, 1440)
-        number("rules", "refresh_days", 0, 3650)
 
         for section, key in (("api", "tls_verify"), ("api", "fetch_account_info"),
                              ("output", "backup_old"), ("output", "include_quantumultx_group"),
-                             ("output", "tls_verify"), ("output", "include_account_info"),
-                             ("rules", "tls_verify")):
+                             ("output", "tls_verify"), ("output", "include_account_info")):
             if type(self.get(section, key)) is not bool:
                 errors.append("[%s] %s 必须是布尔值" % (section, key))
         token = self.get("api", "token")
@@ -200,33 +178,8 @@ class Config:
                     or (isinstance(urls, list) and any(
                         not is_http_url(u) or urlsplit(u).query for u in urls))):
                 errors.append("[api] %s 必须是无查询参数的有效 HTTP(S) URL 列表" % key)
-        sub_url = self.get("api", "subscription_url")
-        if sub_url != "" and not is_http_url(sub_url):
-            errors.append("[api] subscription_url 必须为空或有效的 HTTP(S) URL")
-        if self.get("rules", "preset") not in ("github", "subscription", "builtin"):
-            errors.append("[rules] preset 必须为 github / subscription / builtin")
-        provider_url = self.get("rules", "provider_base_url")
-        if not is_http_url(provider_url) or urlsplit(provider_url).query:
-            errors.append("[rules] provider_base_url 必须是无查询参数的有效 HTTP(S) URL")
-        mirrors = self.get("rules", "mirror_urls")
-        if not isinstance(mirrors, list):
-            errors.append("[rules] mirror_urls 必须是 URL 模板列表,留空列表使用默认镜像")
-        else:
-            for template in mirrors:
-                try:
-                    if not isinstance(template, str):
-                        raise ValueError
-                    fields = [(field, spec, conversion) for _, field, spec, conversion
-                              in Formatter().parse(template) if field is not None]
-                    if (not fields or any(field != "name" or spec or conversion for field, spec, conversion in fields)
-                            or not is_http_url(template.format(name="reject"))):
-                        raise ValueError
-                except (ValueError, KeyError, IndexError, AttributeError, TypeError):
-                    errors.append("[rules] mirror_urls 模板须为有效 HTTP(S) URL 且包含 {name}")
-                    break
-
         for section, key in (("data", "raw_file"), ("data", "output_dir"),
-                             ("rules", "output_dir"), ("log", "file")):
+                             ("log", "file")):
             value = self.get(section, key)
             if not isinstance(value, str) or not value.strip() or "\x00" in value:
                 errors.append("[%s] %s 必须是非空路径" % (section, key))
@@ -239,22 +192,20 @@ class Config:
             errors.append("[log] level 必须是有效的日志级别")
         if not errors:
             try:
-                rules_dir = resolve_path(self.get("rules", "output_dir"))
                 paths = [self.raw_file, self.clash_path, self.quantumultx_path]
                 files = paths + [p.with_suffix(p.suffix + ".bak") for p in paths]
                 files += [self.log_path] + [Path(str(self.log_path) + ".%d" % n)
                                             for n in range(1, LOG_BACKUPS + 1)]
-                files += [rules_dir / (name + ".yaml") for name in RULE_NAMES]
                 if self.token_file is not None:
                     files.append(self.token_file)
-                directories = [self.raw_file.parent, self.output_dir, self.log_path.parent, rules_dir]
-                locks = [self.raw_file.parent / "subloader.lock", rules_dir / ".subloader.lock"]
+                directories = [self.raw_file.parent, self.output_dir, self.log_path.parent]
+                locks = [self.raw_file.parent / "subloader.lock"]
                 locks += list({path_key(p): p for p in (d / WRITE_LOCK_NAME for d in directories)}.values())
                 check_file_paths(files + locks, directories,
                                  [self.path or PROJECT_ROOT / "config.toml", PROJECT_ROOT / "config.toml",
                                   PROJECT_ROOT / "login.local.toml"])
             except (OSError, RuntimeError, ValueError):
-                errors.append("运行文件、备份、日志轮转、规则缓存、锁、目录或配置文件存在路径冲突或无法解析")
+                errors.append("运行文件、备份、日志轮转、锁、目录或配置文件存在路径冲突或无法解析")
         return errors
 
 
@@ -282,8 +233,6 @@ def load_config(path: Path | str | None = None) -> Config:
     elif explicit:
         raise FileNotFoundError("指定的配置文件不存在: %s" % path)
     merged = _merge(DEFAULTS, data)
-    for variable, key in (("SUBLOADER_TOKEN", "token"),
-                          ("SUBLOADER_SUBSCRIPTION_URL", "subscription_url")):
-        if variable in os.environ and isinstance(merged.get("api"), dict):
-            merged["api"][key] = os.environ[variable]
+    if "SUBLOADER_TOKEN" in os.environ and isinstance(merged.get("api"), dict):
+        merged["api"]["token"] = os.environ["SUBLOADER_TOKEN"]
     return Config(merged, path if path.exists() else None)

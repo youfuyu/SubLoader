@@ -14,7 +14,6 @@ import hashlib
 import http.client
 import http.cookiejar
 import json
-import math
 import os
 from pathlib import Path
 import re
@@ -59,7 +58,6 @@ def load_login_config(path: Path | None) -> tuple[dict, Path | None]:
                                              or settings["remember_days"] not in (0, 30)):
             raise ValueError
         if "timeout" in settings and (type(settings["timeout"]) not in (int, float)
-                                       or not math.isfinite(settings["timeout"])
                                        or not 0 < settings["timeout"] <= 120):
             raise ValueError
         token_file = settings.get("token_file", "data/wwss-token.txt")
@@ -150,7 +148,7 @@ class LoginClient:
             _origin(portal)  # 同时校验端口。
         except ValueError:
             raise LoginError("--portal 必须是 HTTPS 门户根地址，不含路径、参数或凭据") from None
-        if not math.isfinite(timeout) or not 0 < timeout <= 120:
+        if type(timeout) not in (int, float) or not 0 < timeout <= 120:
             raise LoginError("--timeout 必须大于 0 且不超过 120 秒")
         self.portal = portal.rstrip("/")
         self.timeout = timeout

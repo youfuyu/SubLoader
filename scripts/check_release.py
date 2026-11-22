@@ -127,6 +127,7 @@ def local_private_values(root: Path) -> set[str]:
         remember(api.get('token'))
         if api.get('token_file'):
             remember_token_file(api['token_file'])
+        # 已停用的旧字段仍纳入扫描,防止历史订阅凭据意外进入源码.
         subscription = api.get('subscription_url', '')
         remember(subscription)
         if isinstance(subscription, str):

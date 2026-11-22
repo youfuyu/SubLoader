@@ -22,7 +22,7 @@ class TestReleaseGuard(unittest.TestCase):
                      'private.pem', 'out/subloader.lock', 'WestWorldVPN-clash.yaml', '.DS_Store'):
             with self.subTest(path=path):
                 self.assertTrue(private_path(path))
-        for path in ('config.example.toml', 'login.example.toml', 'uv.lock', 'core/rules.py', 'tests/test_converter.py',
+        for path in ('config.example.toml', 'login.example.toml', 'uv.lock', 'core/runner.py', 'tests/test_converter.py',
                      'README.md', '.githooks/pre-commit'):
             with self.subTest(path=path):
                 self.assertFalse(private_path(path))
@@ -129,13 +129,11 @@ class TestCredentialPrivacy(unittest.TestCase):
     def test_environment_overrides_are_in_memory_only(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'config.toml'
-            original = '[api]\ntoken = "auto"\nsubscription_url = ""\n'
+            original = '[api]\ntoken = "auto"\n'
             path.write_text(original)
-            with mock.patch.dict(os.environ, {'SUBLOADER_TOKEN': 'test-env-token',
-                                             'SUBLOADER_SUBSCRIPTION_URL': 'https://sub.example.invalid/private'}):
+            with mock.patch.dict(os.environ, {'SUBLOADER_TOKEN': 'test-env-token'}):
                 cfg = load_config(path)
                 self.assertEqual(cfg.get('api', 'token'), 'test-env-token')
-                self.assertEqual(cfg.get('api', 'subscription_url'), 'https://sub.example.invalid/private')
                 self.assertEqual(cfg.validate(), [])
             self.assertEqual(path.read_text(), original)
 
@@ -147,7 +145,6 @@ class TestCredentialPrivacy(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             data = copy.deepcopy(DEFAULTS)
-            data['rules'].update(preset='builtin', output_dir=str(root / 'rules'))
             data['data'].update(raw_file=str(root / 'raw.json'), output_dir=str(root / 'out'))
             data['log']['file'] = str(root / 'app.log')
             cfg = Config(data, None)

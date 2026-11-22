@@ -358,6 +358,7 @@ class TestLoginInputs(unittest.TestCase):
                        '[login]\npassword = 123', '[login]\nopen_captcha = "yes"',
                        '[login]\nremember_days = true', '[login]\nremember_days = 7',
                        '[login]\ntimeout = nan', '[login]\ntoken_file = ""',
+                       '[login]\ntimeout = ' + str(10 ** 400),
                        '[login]\npasswrod = "private-password"']
             for content in invalid:
                 with self.subTest(content=content):
@@ -412,7 +413,7 @@ class TestLoginInputs(unittest.TestCase):
             with self.subTest(portal=portal):
                 with self.assertRaises(login.LoginError):
                     login.LoginClient(portal)
-        for timeout in (0, -1, float("nan"), float("inf"), 121):
+        for timeout in (0, -1, float("nan"), float("inf"), 121, 10 ** 400, True, "20"):
             with self.assertRaises(login.LoginError):
                 login.LoginClient("https://example.invalid", timeout)
 

@@ -1,0 +1,59 @@
+proxy-groups:
+  - name: 节点选择
+    type: select
+    proxies:
+      - 自动选择
+      - 手动选择
+
+  - name: 自动选择
+    type: select
+    proxies:
+      - 自动选择[HK]
+      - 自动选择[JP]
+      - 自动选择[TW]
+      - 自动选择[US]
+
+  - name: 自动选择[HK]
+    type: url-test
+    include-all-proxies: true
+    filter: '(?i)(^|[^a-z])HK([^a-z]|$)'
+    url: https://www.gstatic.com/generate_204
+    interval: 600
+    tolerance: 100
+    lazy: true
+    empty-fallback: REJECT
+
+  - name: 自动选择[JP]
+    type: url-test
+    include-all-proxies: true
+    filter: '(?i)(^|[^a-z])JP([^a-z]|$)'
+    url: https://www.gstatic.com/generate_204
+    interval: 600
+    tolerance: 100
+    lazy: true
+    empty-fallback: REJECT
+
+  - name: 自动选择[TW]
+    type: url-test
+    include-all-proxies: true
+    filter: '(?i)(^|[^a-z])TW([^a-z]|$)'
+    url: https://www.gstatic.com/generate_204
+    interval: 600
+    tolerance: 100
+    lazy: true
+    empty-fallback: REJECT
+
+  - name: 自动选择[US]
+    type: url-test
+    include-all-proxies: true
+    filter: '(?i)(^|[^a-z])US([^a-z]|$)'
+    url: https://www.gstatic.com/generate_204
+    interval: 600
+    tolerance: 100
+    lazy: true
+    empty-fallback: REJECT
+
+  - name: 手动选择
+    type: select
+    include-all-proxies: true
+    empty-fallback: REJECT
